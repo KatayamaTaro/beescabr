@@ -309,3 +309,53 @@ test_that("retry_empty_search stops on 'skip' and when non-interactive", {
                              interactive_ok = FALSE)
   expect_length(out2, 0)
 })
+
+# The banner's option table now offers the WORDS "none" and "skip" rather than the
+# keystrokes "n" and <Enter>. The resolver has always accepted both words, but
+# nothing held it to that -- so a later tightening of this parser could silently
+# break a promise the printed table makes. This is that lock.
+test_that("'none' and 'skip' are accepted, not just 'n' and Enter", {
+  src("reference/holway_reference_build.R")
+  r <- data.frame(source_sheet = "Described", genus = "Stelis",
+                  species_raw = "anthocopae", subgenus = NA_character_,
+                  stringsAsFactors = FALSE)
+
+  # skip returns before the decision cache is touched, so no store is needed
+  for (word in c("skip", "s", ""))
+    expect_null(suppressMessages(
+      .second_pass_resolve(NULL, r, prompt_fn = function(p) word)), info = word)
+
+  if (!requireNamespace("duckdb", quietly = TRUE)) skip("duckdb not installed")
+  src("config.R"); src("inat_observations/engine/db/store_conn.R")
+  src("inat_observations/engine/db/decision_store.R")
+  con <- store_connect(tempfile(fileext = ".duckdb"))
+  on.exit(store_disconnect(con), add = TRUE)
+  for (word in c("none", "n"))
+    expect_identical(suppressMessages(
+      .second_pass_resolve(con, r, prompt_fn = function(p) word)), "no_inat_id",
+      info = word)
+})
+
+# Both give-up parsers compared the raw string against lowercase words, while every
+# other answer parser in the file lowercases first (.yn(), .second_pass_resolve()).
+# So "None" or "Skip" was not an exit: in retry_empty_search it became a name to
+# search -- a live API call, then the identical question again, forever -- and in
+# resolve_slash_answer it fell through to paste(genus, raw) and went looking for
+# "Bombus None". Now that the printed option tables offer whole words, this gets
+# MORE likely, not less.
+test_that("give-up words are recognized whatever the capitalization", {
+  src("reference/holway_reference_build.R")
+  for (word in c("none", "None", "NONE", "skip", "Skip", "SKIP", "")) {
+    calls <- 0L
+    suppressMessages(retry_empty_search(
+      list(), "Stelis anthocopae",
+      fetch_fn = function(x) {          # cap the loop so a regression fails, not hangs
+        calls <<- calls + 1L
+        if (calls > 2L) list(list(id = 1, name = "x", rank = "species")) else list()
+      },
+      prompt_fn = function(p) word))
+    expect_equal(calls, 0L, info = word)      # a give-up costs no API call
+  }
+  for (word in c("none", "None", "NONE", "skip", "Skip", ""))
+    expect_true(is.na(resolve_slash_answer(word, "Bombus", list("a", "b"))), info = word)
+})

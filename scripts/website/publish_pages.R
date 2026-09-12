@@ -322,6 +322,28 @@ inject_backlink <- function(path) {
 }
 
 # Orchestrator: copy pages, build the content + landing pages, write docs/.
+# The one line publish_pages() always prints when it has finished, and the only
+# reliable signal that it did. It refuses an empty or stale docs/ with
+# return(invisible(FALSE)) rather than stop(), so Rscript still exits 0 -- the exit
+# status alone cannot tell a refusal from a success.
+PUBLISH_DONE_MARKER <- "Done. Review docs/"
+
+#' Did a `Rscript publish_pages.R` run actually publish?
+#'
+#' The runner used to check nothing at all: a refusal printed "  STOPPING: ...",
+#' the runner announced "Site rebuilt in docs/" on top of it, and with
+#' BEESCABR_DEPLOY=1 it committed and pushed the half-built folder live. Absence
+#' of the finish line covers every way the run can end early -- the two refusals,
+#' an error part way through the copy loop, and the command not running at all.
+#'
+#' @param out What system2(..., stdout = TRUE, stderr = TRUE) returned.
+#' @return TRUE if the site was NOT published.
+publish_run_failed <- function(out) {
+  st <- attr(out, "status")
+  if (!is.null(st) && !identical(as.integer(st), 0L)) return(TRUE)
+  !any(grepl(PUBLISH_DONE_MARKER, out, fixed = TRUE))
+}
+
 publish_pages <- function() {
   # locate repo root from the script path so it runs from anywhere (mirrors the
   # old `cd "$(dirname "$0")/../.."`). When sourced (tests) there is no --file=.
@@ -390,7 +412,8 @@ publish_pages <- function() {
              file.path(DOCS_DIR, "index.html"))
   add_favicon(file.path(DOCS_DIR, "index.html"))
   message("built      index.html")
-  message("Done. Review docs/, then commit and push. Enable GitHub Pages: Settings -> Pages -> main /docs.")
+  message(PUBLISH_DONE_MARKER,
+          ", then commit and push. Enable GitHub Pages: Settings -> Pages -> main /docs.")
 }
 
 # Run only when executed as a script (Rscript), not when sourced by a test.

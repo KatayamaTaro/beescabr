@@ -212,14 +212,125 @@ plt_resolve_one <- function(name, request_fn = NULL, fetch_by_id_fn = NULL) {
          species = rk[["species"]], resolved = TRUE)
 }
 
-.plt_cache_cols <- c("input_name", "taxon_id", "scientific_name", "common_name", "rank", PLANT_BASIC_RANKS, "resolved")
+# resolved_on: the date this name was last asked about. Without it nothing can tell
+# how old the plant cache is, so refresh_due() could never age it and the yearly
+# prompt could never mention it -- which is exactly how it drifted unnoticed.
+.plt_cache_cols <- c("input_name", "taxon_id", "scientific_name", "common_name", "rank", PLANT_BASIC_RANKS, "resolved", "resolved_on")
 
+#' Read the plant name -> iNaturalist taxon cache
+#'
+#' @param path The cache CSV.
+#' @return Its rows, all columns character; an empty tibble when it does not exist yet.
 plt_load_cache <- function(path = PLT_CACHE) {
   if (!file.exists(path)) return(tibble())
   suppressWarnings(suppressMessages(read_csv(path, show_col_types = FALSE, col_types = cols(.default = "c"))))
 }
 
-plt_resolve_names <- function(names_vec, cache = NULL, resolve_fn = plt_resolve_one, cache_path = PLT_CACHE, verbose = TRUE) {
+
+# ------------------------------------------------------------
+# plant_cache_changes(): PURE. What does iNaturalist now say differently about the
+# plant names we already hold?
+#
+# Plants are resolved BY NAME, not by id, so the change that matters here is not a
+# rename -- it is the SAME name coming back with a DIFFERENT taxon_id. That happens
+# when iNaturalist retires a taxon and the name now matches its replacement, and it
+# silently re-points every bee-plant join that used the old id. Reported ahead of a
+# rename when both happened.
+# ------------------------------------------------------------
+#' Compare a plant name cache against a freshly resolved one
+#'
+#' @param before The cache as it was.
+#' @param after The cache after a forced re-resolution. A name absent from it was not
+#'   re-resolved this run, so nothing is known about it and it is not reported.
+#' @return A data.frame of changed rows only: input_name, change, id_was, id_now,
+#'   name_was, name_now.
+plant_cache_changes <- function(before, after) {
+  key <- function(d) plt_norm(d$input_name)
+  bk <- key(before); ak <- key(after)
+  out <- lapply(seq_len(nrow(before)), function(i) {
+    j <- match(bk[i], ak)
+    if (is.na(j)) return(NULL)                       # not re-resolved: nothing known
+    chr <- function(d, col, r) { v <- if (col %in% names(d)) d[[col]][r] else NA; as.character(v) }
+    id_was <- chr(before, "taxon_id", i); id_now <- chr(after, "taxon_id", j)
+    nm_was <- chr(before, "scientific_name", i); nm_now <- chr(after, "scientific_name", j)
+    res_now <- tolower(chr(after, "resolved", j))
+    change <- if (identical(res_now, "false") || identical(res_now, "f")) "no longer resolves"
+              else if (!identical(id_was, id_now)) "different taxon"
+              else if (!identical(nm_was, nm_now)) "renamed"
+              else NA_character_
+    if (is.na(change)) return(NULL)
+    data.frame(input_name = before$input_name[i], change = change,
+               id_was = id_was, id_now = id_now, name_was = nm_was, name_now = nm_now,
+               stringsAsFactors = FALSE)
+  })
+  out <- Filter(Negate(is.null), out)
+  if (!length(out)) return(data.frame(input_name = character(0), change = character(0),
+                                      id_was = character(0), id_now = character(0),
+                                      name_was = character(0), name_now = character(0),
+                                      stringsAsFactors = FALSE))
+  do.call(rbind, out)
+}
+
+# ------------------------------------------------------------
+# Which changes need a person, and what they answered.
+#
+# A rename is cosmetic: same taxon_id, new spelling, every join still holds, so it is
+# taken without asking. An id change is not -- the plant name now matches a DIFFERENT
+# iNaturalist taxon, and every bee-plant record using it silently follows. Only a
+# person can say whether that is the same plant. Same for a name that stopped
+# resolving. The tool used to write the new cache and print the change afterwards,
+# which meant the id had already moved by the time anyone read about it.
+# ------------------------------------------------------------
+#' The changed rows a person has to rule on
+#'
+#' @param changed What `plant_cache_changes()` returned.
+#' @return The subset that moves or loses a taxon_id.
+plant_changes_to_ask <- function(changed) {
+  if (!nrow(changed)) return(changed)
+  changed[changed$change %in% c("different taxon", "no longer resolves"), , drop = FALSE]
+}
+
+#' Read one answer to "is this the same plant?"
+#'
+#' @param raw What the operator typed.
+#' @return "take", "keep", "quit", or "unclear". Blank is keep: doing nothing must
+#'   never be the answer that moves an id.
+plant_change_choice <- function(raw) {
+  a <- answer_norm(raw)
+  if (!nzchar(a))                          return("keep")   # Enter never moves an id
+  if (a %in% c("take", "t"))               return("take")
+  if (a %in% c("keep", "k"))               return("keep")
+  if (answer_is(raw, "yes"))               return("take")
+  if (answer_is(raw, c("no", "skip")))     return("keep")
+  if (answer_is(raw, "quit"))              return("quit")
+  "unclear"
+}
+
+#' Put the old row back for the names the operator kept
+#'
+#' @param after The re-resolved cache.
+#' @param before The cache as it was.
+#' @param kept_names Input names to restore.
+#' @return `after` with those rows replaced by their `before` versions.
+plant_apply_keep <- function(after, before, kept_names) {
+  if (!length(kept_names)) return(after)
+  k <- plt_norm(kept_names)
+  after <- after[!(plt_norm(after$input_name) %in% k), , drop = FALSE]
+  dplyr::bind_rows(after, before[plt_norm(before$input_name) %in% k, , drop = FALSE])
+}
+
+#' Resolve plant names to iNaturalist taxa, cache-first
+#'
+#' @param names_vec The names to resolve.
+#' @param cache An already-loaded cache, or NULL to read it from `cache_path`.
+#' @param resolve_fn Injection point for the per-name resolution.
+#' @param cache_path Where the cache lives.
+#' @param verbose Print each name as it is resolved.
+#' @param force Ask iNaturalist again about names already in the cache. The cache has
+#'   no age of its own, so this is the only way a revised plant is ever noticed.
+#' @return A list of `rows` (one per requested name) and the updated `cache`.
+plt_resolve_names <- function(names_vec, cache = NULL, resolve_fn = plt_resolve_one,
+                              cache_path = PLT_CACHE, verbose = TRUE, force = FALSE) {
   cache <- cache %||% plt_load_cache(cache_path)
   # Keep everything character: a disk-loaded cache is all-character, a fresh
   # resolution has a logical `resolved`; without this bind_rows() refuses to
@@ -228,14 +339,24 @@ plt_resolve_names <- function(names_vec, cache = NULL, resolve_fn = plt_resolve_
   have  <- if (nrow(cache)) plt_norm(cache$input_name) else character(0)
   out <- list()
   for (nm in names_vec) {
-    hit <- if (length(have)) which(have == plt_norm(nm)) else integer(0)
+    # force: ask iNaturalist again about a name we already hold. The cache has no age,
+    # so without this a name resolved once keeps its first taxon_id forever -- and
+    # plants are resolved BY NAME, so a retired taxon quietly re-points the name at a
+    # different id that nothing would ever look for.
+    hit <- if (!isTRUE(force) && length(have)) which(have == plt_norm(nm)) else integer(0)
     if (length(hit)) out[[nm]] <- cache[hit[1], intersect(.plt_cache_cols, names(cache)), drop = FALSE]
     else {
       if (verbose) message("  resolving plant name: ", nm)
-      r <- resolve_fn(nm); r$input_name <- nm
+      r <- resolve_fn(nm); r$input_name <- nm; r$resolved_on <- as.character(Sys.Date())
       r <- mutate(r, across(everything(), as.character))
       out[[nm]] <- r[, intersect(.plt_cache_cols, names(r)), drop = FALSE]
-      cache <- bind_rows(cache, out[[nm]]); have <- c(have, plt_norm(nm))
+      # a forced re-resolution REPLACES its row; appending beside the old one would
+      # leave two rows for one name and the stale one first. An empty cache has no
+      # input_name column yet, so only filter when there is something to filter.
+      if (nrow(cache) && "input_name" %in% names(cache))
+        cache <- cache[plt_norm(cache$input_name) != plt_norm(nm), , drop = FALSE]
+      cache <- bind_rows(cache, out[[nm]])
+      have  <- if ("input_name" %in% names(cache)) plt_norm(cache$input_name) else character(0)
     }
   }
   list(rows = if (length(out)) bind_rows(out) else tibble(), cache = cache)

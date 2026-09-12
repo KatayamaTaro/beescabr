@@ -39,3 +39,31 @@ test_that("an authentication failure is recognisable as one", {
   expect_false(.iucn_is_auth_error("Timeout was reached"))
   expect_false(.iucn_is_auth_error(NA_character_))
 })
+
+# The "we could not refresh IUCN" block lost a pair of braces: `if (!nzchar(key))`
+# guarded only the first of its two message() calls, so the second half of the
+# sentence -- "pipeline will ask for it, or put it in data/secrets/..." -- printed
+# even when a token was already set. An operator whose only problem was a missing
+# R package was told to go find an API token they already had.
+test_that("a missing package is not reported as a missing token", {
+  note <- .iucn_skip_note(need_n = 3L, has_pkg = FALSE, has_key = TRUE)
+  txt <- paste(note, collapse = " ")
+  expect_match(txt, "rredlist", fixed = TRUE)
+  expect_false(grepl("token", txt, ignore.case = TRUE))
+  expect_false(grepl("data/secrets", txt, fixed = TRUE))
+})
+
+test_that("a missing token keeps both halves of its sentence", {
+  note <- .iucn_skip_note(need_n = 3L, has_pkg = TRUE, has_key = FALSE)
+  txt <- paste(note, collapse = " ")
+  expect_match(txt, "api.iucnredlist.org", fixed = TRUE)
+  expect_match(txt, "data/secrets/iucn_api.env", fixed = TRUE)
+  expect_false(grepl("rredlist is not installed", txt, fixed = TRUE))
+})
+
+test_that("both missing reports both, and the count leads", {
+  txt <- paste(.iucn_skip_note(need_n = 3L, has_pkg = FALSE, has_key = FALSE), collapse = " ")
+  expect_match(txt, "3 species", fixed = TRUE)
+  expect_match(txt, "rredlist", fixed = TRUE)
+  expect_match(txt, "api.iucnredlist.org", fixed = TRUE)
+})

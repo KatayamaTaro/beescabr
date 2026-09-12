@@ -189,3 +189,31 @@ test_that("a page with no <head> is left alone rather than corrupted", {
   h <- add_favicon_html("<div>fragment</div>")
   expect_equal(h, "<div>fragment</div>")
 })
+
+# publish_pages() refuses an empty or stale docs/ with return(invisible(FALSE)) --
+# it does not stop(), so Rscript still exits 0. The runner read neither the exit
+# status nor the output, so a refusal was printed, "Site rebuilt in docs/" was
+# announced on top of it, and with BEESCABR_DEPLOY=1 the half-built folder was
+# committed and pushed live. The success line is the only reliable signal, so it
+# is a constant that both the message and the check read.
+test_that("a finished publish is recognized", {
+  expect_false(publish_run_failed(c("built      bee_field_guide.html",
+                                    paste0(PUBLISH_DONE_MARKER, ", then commit and push."))))
+})
+
+test_that("a refusal is a failure even though the exit code is 0", {
+  expect_true(publish_run_failed(c("built      bee_field_guide.html",
+                                   "  STOPPING: docs/ would be emptied")))
+})
+
+test_that("a non-zero exit is a failure", {
+  out <- paste0(PUBLISH_DONE_MARKER, ", then commit and push.")
+  attr(out, "status") <- 1L
+  expect_true(publish_run_failed(out))
+})
+
+test_that("a crash part way through is a failure, not a silent success", {
+  expect_true(publish_run_failed(c("built      bee_field_guide.html",
+                                   "Error in build_content_pages() : object 'x' not found")))
+  expect_true(publish_run_failed(character(0)))       # never ran at all
+})

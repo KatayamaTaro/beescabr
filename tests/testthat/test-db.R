@@ -58,6 +58,20 @@ test_that("decision store records pick and skip", {
 
   decision_put(con, "Foo bar", "skip")
   expect_equal(decision_get(con, "Foo bar")$action, "skip")
+
+  # "no iNat page for this bee" is a real, permanent answer -- holway_reference_build.R
+  # writes it, reads it back to stop re-asking, and switches on it for itis_valid. The
+  # whitelist here never learned the word, so the write threw, the caller's tryCatch
+  # swallowed the error, and the operator's answer was silently discarded: the prompt
+  # promised "you will not be asked again" and then asked again every run.
+  decision_put(con, "Hesperapis ilicifoliae", "no_inat_id")
+  expect_equal(decision_get(con, "Hesperapis ilicifoliae")$action, "no_inat_id")
+
+  # The prompt now re-asks about these every run, so it has to be able to say WHEN
+  # you last answered -- "you said no page, back in March" is what tells you whether
+  # it is worth looking again.
+  expect_match(as.character(decision_get(con, "Hesperapis ilicifoliae")$decided_at),
+               "^[0-9]{4}-[0-9]{2}-[0-9]{2}")
 })
 
 test_that("ingest_observations pages via raw text and DuckDB-side parsing", {
@@ -164,4 +178,166 @@ test_that("resolve_taxonomy batches many ids into one request (rate-limit fix)",
   expect_equal(nrow(m), 3)
   expect_equal(calls, 1)                 # 3 ids resolved in ONE batched request
   expect_true(all(m$taxon_family_name == "Apidae"))
+})
+
+# A human's pick is replayed forever: resolve_holway_row() returns the stored
+# chosen_taxon_id before any API call, and nothing ever re-validates it. So when
+# iNaturalist retires that taxon, the decision keeps handing back a dead number and
+# the yearly sweep cannot undo it -- the pick outranks everything downstream.
+#
+# Wiping every decision would mean re-answering hundreds of questions, nearly all of
+# which are still right. Only the ones pointing at a taxon that actually MOVED need
+# asking again, so the store has to be able to say which those are, and to forget
+# just those.
+test_that("the store can say which decisions point at a given taxon", {
+  skip_if_no_store()
+  con <- open_temp_store(); on.exit(store_disconnect(con), add = TRUE)
+  decision_put(con, "Andrena quercina", "pick", 62881L)
+  decision_put(con, "Stelis anthocopae", "pick", 199123L)
+  decision_put(con, "Bombus crotchii", "pick", 118970L)
+
+  expect_setequal(decisions_for_taxa(con, c(62881L, 199123L)),
+                  c("Andrena quercina", "Stelis anthocopae"))
+  expect_length(decisions_for_taxa(con, 999999L), 0L)
+  expect_length(decisions_for_taxa(con, integer(0)), 0L)
+})
+
+test_that("a decision with no chosen taxon is never matched", {
+  skip_if_no_store()
+  con <- open_temp_store(); on.exit(store_disconnect(con), add = TRUE)
+  decision_put(con, "Hesperapis ilicifoliae", "no_inat_id")
+  expect_length(decisions_for_taxa(con, 62881L), 0L)
+})
+
+test_that("forgetting one decision leaves the rest alone", {
+  skip_if_no_store()
+  con <- open_temp_store(); on.exit(store_disconnect(con), add = TRUE)
+  decision_put(con, "Andrena quercina", "pick", 62881L)
+  decision_put(con, "Bombus crotchii", "pick", 118970L)
+
+  expect_equal(decision_forget(con, "Andrena quercina"), 1L)
+  expect_null(decision_get(con, "Andrena quercina"))       # asked again next build
+  expect_equal(decision_get(con, "Bombus crotchii")$chosen_taxon_id, 118970L)
+})
+
+test_that("forgetting several at once works, and forgetting nothing is safe", {
+  skip_if_no_store()
+  con <- open_temp_store(); on.exit(store_disconnect(con), add = TRUE)
+  decision_put(con, "A b", "pick", 1L); decision_put(con, "C d", "pick", 2L)
+  expect_equal(decision_forget(con, c("A b", "C d")), 2L)
+  expect_equal(decision_count(con), 0L)
+  expect_equal(decision_forget(con, character(0)), 0L)
+})
+
+test_that("forgetting a decision that was never made is not an error", {
+  skip_if_no_store()
+  con <- open_temp_store(); on.exit(store_disconnect(con), add = TRUE)
+  expect_equal(decision_forget(con, "never asked"), 0L)
+})
+
+# The version notice needs to know which dropped checklist names had an answer on
+# file, so it can say those answers are now orphaned instead of leaving them to be
+# discovered years later.
+test_that("the store can list every search term it holds an answer for", {
+  skip_if_no_store()
+  con <- open_temp_store(); on.exit(store_disconnect(con), add = TRUE)
+  expect_length(decisions_all_terms(con), 0L)
+  decision_put(con, "Andrena quercina", "pick", 62881L)
+  decision_put(con, "Hesperapis ilicifoliae", "no_inat_id")
+  expect_setequal(decisions_all_terms(con), c("Andrena quercina", "Hesperapis ilicifoliae"))
+})
+
+# A saved answer for a bee that has left the checklist is never read again: the Holway
+# build loops over the names in the CURRENT sheet, so a dropped name is never looked
+# up. They are harmless, but they accumulate across checklist versions, and someone
+# reading that table in five years finds answers for bees that left two versions ago.
+#
+# The guard matters more than the cleanup. This is a DELETE driven by a file read: if
+# the checklist fails to load, or loads empty, an unguarded sweep would wipe every
+# answer in the store on the strength of a bad read.
+test_that("answers for names no longer on the checklist are dropped", {
+  skip_if_no_store()
+  con <- open_temp_store(); on.exit(store_disconnect(con), add = TRUE)
+  decision_put(con, "Andrena quercina", "pick", 1L)
+  decision_put(con, "Holcopasites minima", "pick", 2L)      # respelled away in v4
+  current <- c("Andrena quercina", "Holcopasites minimus", paste("Filler bee", 1:200))
+
+  expect_equal(forget_orphan_decisions(con, current), 1L)
+  expect_null(decision_get(con, "Holcopasites minima"))
+  expect_equal(decision_get(con, "Andrena quercina")$chosen_taxon_id, 1L)
+})
+
+test_that("an empty checklist deletes nothing at all", {
+  skip_if_no_store()
+  con <- open_temp_store(); on.exit(store_disconnect(con), add = TRUE)
+  decision_put(con, "Andrena quercina", "pick", 1L)
+  expect_equal(forget_orphan_decisions(con, character(0)), 0L)
+  expect_equal(decision_count(con), 1L)
+})
+
+test_that("a suspiciously short checklist deletes nothing -- a bad read must not wipe the store", {
+  skip_if_no_store()
+  con <- open_temp_store(); on.exit(store_disconnect(con), add = TRUE)
+  for (i in 1:5) decision_put(con, paste("Bee", i), "pick", i)
+  expect_equal(forget_orphan_decisions(con, c("Bee 1", "Bee 2")), 0L)   # only 2 names
+  expect_equal(decision_count(con), 5L)
+})
+
+test_that("stray whitespace does not make a name look dropped", {
+  skip_if_no_store()
+  con <- open_temp_store(); on.exit(store_disconnect(con), add = TRUE)
+  decision_put(con, "Andrena quercina", "pick", 1L)
+  expect_equal(forget_orphan_decisions(con, c("  Andrena quercina  ", paste("Filler bee", 1:200))), 0L)
+  expect_equal(decision_count(con), 1L)
+})
+
+# A checklist version bump wipes every saved answer. Not for tidiness -- because a
+# surviving NAME is not evidence the bee survived unchanged. Holway can keep a
+# spelling and change what it means (a split where the old name is kept for one of
+# the pieces), and nothing in the string reveals that. Reusing the answer assumes it
+# did not happen; wiping costs 40 minutes of machine time and ~22 real questions,
+# and re-asks exactly the ambiguous bees where a concept shift is most likely.
+#
+# Cheap, loud, recoverable -- and "recoverable" has to be literal, not theoretical,
+# so the answers are written out before they are dropped.
+test_that("every answer can be written out before being dropped", {
+  skip_if_no_store()
+  con <- open_temp_store(); on.exit(store_disconnect(con), add = TRUE)
+  decision_put(con, "Andrena quercina", "pick", 62881L)
+  decision_put(con, "Hesperapis ilicifoliae", "no_inat_id")
+
+  f <- tempfile(fileext = ".csv")
+  expect_equal(decision_export(con, f), 2L)
+  d <- read.csv(f, stringsAsFactors = FALSE)
+  expect_setequal(d$search_term, c("Andrena quercina", "Hesperapis ilicifoliae"))
+  expect_equal(d$chosen_taxon_id[d$search_term == "Andrena quercina"], 62881L)
+  expect_true("action" %in% names(d) && "decided_at" %in% names(d))
+})
+
+test_that("exporting an empty store writes a file with no rows, not nothing", {
+  skip_if_no_store()
+  con <- open_temp_store(); on.exit(store_disconnect(con), add = TRUE)
+  f <- tempfile(fileext = ".csv")
+  expect_equal(decision_export(con, f), 0L)
+  expect_true(file.exists(f))
+})
+
+test_that("wiping drops everything and reports how many", {
+  skip_if_no_store()
+  con <- open_temp_store(); on.exit(store_disconnect(con), add = TRUE)
+  for (i in 1:5) decision_put(con, paste("Bee", i), "pick", i)
+  expect_equal(decision_forget_all(con), 5L)
+  expect_equal(decision_count(con), 0L)
+  expect_equal(decision_forget_all(con), 0L)          # wiping twice is safe
+})
+
+# The trigger. An absent marker means "we have never recorded which version these
+# answers came from" -- which must NOT wipe: the first run after this feature ships
+# would destroy every answer on the strength of a file that never existed.
+test_that("a version change is only a change when both versions are known", {
+  expect_true(holway_version_bumped(now = 4L, was = 3L))
+  expect_false(holway_version_bumped(now = 3L, was = 3L))
+  expect_false(holway_version_bumped(now = 4L, was = NA_integer_))   # never recorded
+  expect_false(holway_version_bumped(now = NA_integer_, was = 3L))   # unreadable now
+  expect_false(holway_version_bumped(now = 3L, was = 4L))            # rebuilding an older one
 })

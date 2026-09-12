@@ -121,6 +121,20 @@ IUCN_SYNONYM    <- c("Bombus sonorus"      = "Bombus pensylvanicus",
        note = if (q != binom && code != "NE") sprintf(" (as %s)", q) else "")
 }
 
+# What to print when the Red List cannot be reached. A pure function because the
+# braces here were wrong once: `if (!nzchar(key))` guarded only the first of the
+# token block's two lines, so the second printed even when a token WAS set, and an
+# operator missing only an R package was sent hunting for credentials they had.
+# The two causes have completely different fixes, so each is reported on its own.
+.iucn_skip_note <- function(need_n, has_pkg, has_key) {
+  c(sprintf("  IUCN: %d species not refreshed -- using the cached values.", need_n),
+    if (!has_pkg)
+      "  IUCN: rredlist is not installed. Run: source('scripts/utils/install_requirements.R')",
+    if (!has_key) c(
+      "  IUCN: no API token. Get one free at https://api.iucnredlist.org and the",
+      "  IUCN: pipeline will ask for it, or put it in data/secrets/iucn_api.env"))
+}
+
 # Resolve IUCN status for a vector of "Genus species" names. Returns the FULL cache-backed
 # table (data.frame). Incremental + offline-safe; writes the cache when it learns something.
 resolve_iucn <- function(species, force = FALSE, verbose = TRUE) {
@@ -135,14 +149,8 @@ resolve_iucn <- function(species, force = FALSE, verbose = TRUE) {
 
   # Say WHICH thing is missing. "no token / rredlist missing" left the operator guessing,
   # and the two have completely different fixes.
-  if (length(need) > 0 && !can_net && verbose) {
-    message(sprintf("  IUCN: %d species not refreshed -- using the cached values.", length(need)))
-    if (!has_pkg)
-      message("  IUCN: rredlist is not installed. Run: source('scripts/utils/install_requirements.R')")
-    if (!nzchar(key))
-      message("  IUCN: no API token. Get one free at https://api.iucnredlist.org and the")
-      message("  IUCN: pipeline will ask for it, or put it in data/secrets/iucn_api.env")
-  }
+  if (length(need) > 0 && !can_net && verbose)
+    for (ln in .iucn_skip_note(length(need), has_pkg, nzchar(key))) message(ln)
 
   if (can_net) {
     if (verbose) message(sprintf("  IUCN: fetching %d species from the Red List (v4)...", length(need)))

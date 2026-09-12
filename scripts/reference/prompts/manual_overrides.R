@@ -22,6 +22,9 @@ suppressWarnings(suppressMessages({ library(dplyr); library(readr); library(stri
 
 `%||%` <- if (exists("%||%")) `%||%` else function(a, b) if (is.null(a) || length(a) == 0) b else a
 
+# the shared answer vocabulary -- one set of words for every prompt in the pipeline
+if (!exists("answer_is")) source("scripts/utils/answers.R")
+
 MANUAL_OVERRIDES_PATH <- "data/reference/hand_curated/manual_taxon_overrides.csv"   # user-curated answers
 TAXON_REVIEW_PATH     <- "data/reference/generated/cabr_taxon_ids_needs_review.csv"  # the prompt / worklist
 RMI_CACHE_PATH        <- "data/reference/generated/resolved_missing_ids.csv"     # the resolver's verdict cache
@@ -179,13 +182,36 @@ write_review_worklist <- function(cache_path = RMI_CACHE_PATH, overrides = NULL,
 #'
 #' @param n How many names are being asked about.
 #' @return Invisibly NULL; prints.
+MO_COLS <- c("rank", "name", "taxon_id", "correct_name", "note")
+
+#' Fold new answers into the overrides file's existing ones
+#'
+#' PURE. One rule for which answer wins: a newer answer replaces an older one for the
+#' same bee, where "the same bee" is rank plus normalized name -- so the same name at
+#' two ranks stays two rows. Pulled out of `prompt_missing_taxon_ids()` because the
+#' yearly taxon sweep records corrections too, and two copies of this rule would drift.
+#'
+#' @param new The answers just given.
+#' @param existing The overrides file's current rows, or NULL.
+#' @return The merged rows, ordered by rank then name.
+merge_manual_overrides <- function(new, existing = NULL) {
+  cols <- MO_COLS
+  if (!is.null(existing)) for (c in cols) if (!c %in% names(existing))
+    existing[[c]] <- if (c == "taxon_id") NA_integer_ else NA_character_
+  existing <- if (is.null(existing)) new[0, cols] else existing[, cols]
+  existing$taxon_id <- suppressWarnings(as.integer(existing$taxon_id))
+  bind_rows(new[, cols], existing) |>
+    mutate(.k = paste(tolower(trimws(rank)), .mo_norm(name))) |>
+    distinct(.k, .keep_all = TRUE) |> select(-.k) |> arrange(rank, name)
+}
+
 .mo_banner <- function(n) {
   message("")
   message("  ", n, " checklist bees still have no iNaturalist id.")
   message("")
   message("  These were ALREADY searched for automatically and not found, so this is")
   message("  a second opinion rather than a first look. Some genuinely have no page on")
-  message("  iNaturalist -- that is expected and documented, and 'n' is the right answer.")
+  message("  iNaturalist -- that is expected and documented, and 'none' is the right answer.")
   message("")
   message("  For each one, two questions:")
   message("    1. Is it on iNaturalist under another name?  The search link is printed")
@@ -197,9 +223,11 @@ write_review_worklist <- function(cache_path = RMI_CACHE_PATH, overrides = NULL,
   message("  WHAT TO TYPE")
   message("    345235             a taxon_id you found")
   message("    345235 New name    the id AND a corrected name")
-  message("    n                  no iNaturalist page; stop asking about it")
-  message("    <Enter>            skip for now")
-  message("    q                  stop, keeping everything entered so far")
+  message("    none               there is no iNaturalist page for this bee")
+  message("    skip               not sure. Pressing Enter does the same.")
+  message("                         Either way nothing is recorded and you are asked")
+  message("                         again next run, in case a page gets added.")
+  message("    quit               stop here, keeping everything entered so far")
   invisible(NULL)
 }
 
@@ -226,9 +254,9 @@ prompt_missing_taxon_ids <- function(cache_path = RMI_CACHE_PATH, overrides_path
   for (i in seq_len(nrow(open))) {
     o <- open[i, ]
     message(sprintf("\n[%d/%d] %s  (%s)\n   %s", i, nrow(open), o$name, o$rank, o$inat_search_url))
-    raw <- trimws(prompt_fn("   taxon_id (or 'id Current name'), n = none, blank = skip: "))
-    if (tolower(raw) == "q") break
-    if (raw == "" || tolower(raw) %in% c("n", "no", "skip")) next
+    raw <- trimws(prompt_fn("   taxon_id (or 'id Current name'), none, or skip: "))
+    if (answer_is(raw, "quit")) break
+    if (raw == "" || answer_is(raw, c("none", "skip"))) next
     toks <- strsplit(raw, "\\s+")[[1]]
     id <- suppressWarnings(as.integer(toks[1]))
     if (is.na(id)) { message("   (not a number -- skipped)"); next }
@@ -240,14 +268,7 @@ prompt_missing_taxon_ids <- function(cache_path = RMI_CACHE_PATH, overrides_path
   new <- bind_rows(answers)
   existing <- if (file.exists(overrides_path))
     tryCatch(suppressWarnings(read_csv(overrides_path, show_col_types = FALSE)), error = function(e) NULL) else NULL
-  if (!is.null(existing)) for (c in cols) if (!c %in% names(existing))
-    existing[[c]] <- if (c == "taxon_id") NA_integer_ else NA_character_
-  existing <- if (is.null(existing)) new[0, cols] else existing[, cols]
-  existing$taxon_id <- suppressWarnings(as.integer(existing$taxon_id))
-  # new answers win over any existing row for the same (rank, name)
-  combined <- bind_rows(new[, cols], existing) |>
-    mutate(.k = paste(tolower(trimws(rank)), .mo_norm(name))) |>
-    distinct(.k, .keep_all = TRUE) |> select(-.k) |> arrange(rank, name)
+  combined <- merge_manual_overrides(new, existing)
   dir.create(dirname(overrides_path), recursive = TRUE, showWarnings = FALSE)
   suppressWarnings(readr::write_csv(combined, overrides_path, na = ""))
   message(sprintf("   recorded %d id(s) -> %s (applies at both levels next build)",

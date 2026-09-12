@@ -79,6 +79,19 @@ pub <- tryCatch(system2("Rscript", "scripts/website/publish_pages.R", stdout = T
                 error = function(e) conditionMessage(e))
 message(paste(pub, collapse = "\n"))
 
+# publish_pages.R refuses an empty or a stale docs/ by printing "STOPPING: ..." and
+# returning FALSE -- it does not stop(), so Rscript exits 0 either way. Nothing here
+# used to check: the refusal scrolled past, "Site rebuilt in docs/" was announced on
+# top of it, and with BEESCABR_DEPLOY=1 the half-built folder was committed and pushed
+# live. Same reasoning as the page-rebuild stop above -- a half-built public site is
+# worse than none. Both refusals already print the commands that fix them, so this
+# only has to be loud and stop.
+if (!exists("publish_run_failed")) source("scripts/website/publish_pages.R")
+if (publish_run_failed(pub))
+  stop("The site was NOT published -- docs/ and the live site are unchanged.",
+       "\n  The reason is in the output just above, with the commands that fix it.",
+       call. = FALSE)
+
 if (identical(Sys.getenv("BEESCABR_DEPLOY"), "1")) {
   message("\n==> Deploying (BEESCABR_DEPLOY=1)")
   system2("git", c("add", "docs/"))

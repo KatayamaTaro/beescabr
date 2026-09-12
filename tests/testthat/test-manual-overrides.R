@@ -140,3 +140,88 @@ test_that("prompt_missing_taxon_ids skips blank / 'n' answers", {
                                 interactive_ok = TRUE, prompt_fn = function(p) "n")
   expect_equal(n, 0L)                       # 'n' = no id yet -> nothing recorded
 })
+
+# The banner said `n` meant "no iNaturalist page; stop asking about it", but the
+# parser treated `n` exactly like a blank line -- nothing recorded, asked again next
+# run. The promise was never implemented. Brandi's call is to ask every run anyway
+# (iNaturalist does add bees, so a permanent "never again" is the wrong default), so
+# the fix is to make the banner tell the truth, and to accept every spelling of the
+# answer rather than the three the parser happened to list.
+test_that("every spelling of 'no page' and 'skip' is accepted", {
+  src("reference/manual_overrides.R")
+  cache <- tempfile(fileext = ".csv")
+  readr::write_csv(tibble(key = "species|holcopasites minima|1",
+                          taxon_id = NA_integer_, status = "not_found_or_ambiguous"), cache)
+  for (word in c("n", "N", "no", "No", "none", "NONE", "noid", "skip", "Skip", "s", "")) {
+    ovp <- tempfile(fileext = ".csv")
+    n <- prompt_missing_taxon_ids(cache_path = cache, overrides_path = ovp,
+                                  interactive_ok = TRUE, prompt_fn = function(p) word)
+    expect_equal(n, 0L, info = word)
+    expect_false(file.exists(ovp), info = word)
+  }
+})
+
+test_that("every spelling of quit stops the pass", {
+  src("reference/manual_overrides.R")
+  cache <- tempfile(fileext = ".csv")
+  readr::write_csv(tibble(key = c("species|holcopasites minima|1", "species|stelis anthocopae|2"),
+                          taxon_id = NA_integer_, status = "not_found_or_ambiguous"), cache)
+  for (word in c("q", "Q", "quit", "Quit", "exit")) {
+    asked <- 0L
+    ovp <- tempfile(fileext = ".csv")
+    prompt_missing_taxon_ids(cache_path = cache, overrides_path = ovp,
+                             interactive_ok = TRUE,
+                             prompt_fn = function(p) { asked <<- asked + 1L; word })
+    expect_equal(asked, 1L, info = word)     # stopped after the first name, not both
+  }
+})
+
+test_that("the banner no longer promises to stop asking", {
+  src("reference/manual_overrides.R")
+  said <- character(0)
+  withCallingHandlers(.mo_banner(17L), message = function(m) {
+    said <<- c(said, conditionMessage(m)); invokeRestart("muffleMessage") })
+  txt <- gsub("[[:space:]]+", " ", paste(said, collapse = " "))   # wrapping is not content
+  expect_false(grepl("stop asking", txt, ignore.case = TRUE))
+  expect_match(txt, "asked again", fixed = TRUE)
+})
+
+# The merge that decides which answer wins was buried inside prompt_missing_taxon_ids,
+# so the yearly taxon sweep could not record a correction without copying it. Pulled
+# out so there is one rule for "a newer answer replaces an older one for the same bee".
+test_that("a new answer replaces an older one for the same bee", {
+  src("reference/manual_overrides.R")
+  old <- tibble(rank = "species", name = "Andrena quercina", taxon_id = 62881L,
+                correct_name = NA_character_, note = "old")
+  new <- tibble(rank = "species", name = "Andrena quercina", taxon_id = 901455L,
+                correct_name = "Andrena quercinella", note = "taxon sweep")
+  out <- merge_manual_overrides(new, old)
+  expect_equal(nrow(out), 1L)
+  expect_equal(out$taxon_id, 901455L)
+  expect_equal(out$note, "taxon sweep")
+})
+
+test_that("a different bee is kept alongside, not replaced", {
+  src("reference/manual_overrides.R")
+  old <- tibble(rank = "species", name = "Stelis anthocopae", taxon_id = 1L,
+                correct_name = NA_character_, note = "old")
+  new <- tibble(rank = "species", name = "Andrena quercina", taxon_id = 2L,
+                correct_name = NA_character_, note = "new")
+  expect_equal(nrow(merge_manual_overrides(new, old)), 2L)
+})
+
+test_that("the same name at a different rank is a different bee", {
+  src("reference/manual_overrides.R")
+  old <- tibble(rank = "genus", name = "Stelis", taxon_id = 1L,
+                correct_name = NA_character_, note = "old")
+  new <- tibble(rank = "subgenus", name = "Stelis", taxon_id = 2L,
+                correct_name = NA_character_, note = "new")
+  expect_equal(nrow(merge_manual_overrides(new, old)), 2L)
+})
+
+test_that("merging into nothing works", {
+  src("reference/manual_overrides.R")
+  new <- tibble(rank = "species", name = "A b", taxon_id = 1L,
+                correct_name = NA_character_, note = "n")
+  expect_equal(nrow(merge_manual_overrides(new, NULL)), 1L)
+})

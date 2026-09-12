@@ -289,14 +289,73 @@ test_that("it says what to do when the bee was not on a flower", {
 })
 
 # The correction example read as a real name -- "Stelis foo" looks like something
-# you could type -- rather than as a slot to fill. Use the genus actually being
-# asked about, with an obvious placeholder for the part they supply.
-test_that("the correction example uses the real genus, not a stand-in", {
-  r <- list(source_sheet = "Described", genus = "Stelis", species_raw = "anthocopae",
-            subgenus = NA_character_)
+# you could type -- rather than as a slot to fill. Then "Genus <corrected>" had the
+# opposite problem: it read as "type a genus", when the answer is usually a species
+# or a subspecies. Name the ranks that are allowed instead of showing a template.
+test_that("the name option is not a fill-in-the-blank template", {
   txt <- .said(.second_pass_banner(1L))
   expect_false(grepl("Stelis foo", txt, fixed = TRUE))
-  expect_match(txt, "<corrected", fixed = TRUE)
+  expect_false(grepl("<corrected", txt, fixed = TRUE))
+})
+
+test_that("the name option says which ranks you can type", {
+  txt <- .said(.second_pass_banner(1L))
+  for (rank in c("cientific", "genus", "subgenus", "complex", "species", "subspecies"))
+    expect_match(txt, rank, fixed = TRUE, info = rank)
+})
+
+# "the single letter n" and "<Enter>" are both harder to type with confidence than
+# the word for what they do -- and the resolver has always accepted both words.
+# The table simply never said so.
+# Answering "no iNaturalist page" used to be permanent: the row was cached and never
+# asked about again. But iNaturalist DOES add bees -- that is the whole reason to look
+# again -- and the automatic search caches its own not-found verdict too, so nothing in
+# the pipeline would ever notice. Brandi's call: ask every run. The answer is still
+# recorded (it marks the name as a real bee), it just stops suppressing the question.
+test_that("a bee answered 'no iNaturalist page' is asked about again", {
+  r <- list(source_sheet = "Described", species_raw = "anthocopae")
+  row <- list(taxon_id = NA_integer_)
+  expect_true(.second_pass_asks(r$source_sheet, r$species_raw, row))
+})
+
+test_that("a bee that HAS an id is not asked about", {
+  expect_false(.second_pass_asks("Described", "anthocopae", list(taxon_id = 12345L)))
+  expect_false(.second_pass_asks("Described", "anthocopae", NULL))
+})
+
+test_that("slash rows and other sheets are still left to the first pass", {
+  row <- list(taxon_id = NA_integer_)
+  expect_false(.second_pass_asks("Described", "anthocopae / copelandica", row))
+  expect_false(.second_pass_asks("Undescribed", "sp. nov. 1", row))
+})
+
+test_that("a repeat question says what you answered last time, and when", {
+  r <- list(genus = "Hesperapis", species_raw = "ilicifoliae", subgenus = NA_character_)
+  txt <- .said(.second_pass_item(r, 1L, 1L,
+                                 prior = list(action = "no_inat_id",
+                                              decided_at = "2026-03-14 09:12:00")))
+  expect_match(txt, "2026-03-14", fixed = TRUE)
+  expect_match(txt, "no iNaturalist page", ignore.case = TRUE)
+})
+
+test_that("a first-time question says nothing about a previous answer", {
+  r <- list(genus = "Hesperapis", species_raw = "ilicifoliae", subgenus = NA_character_)
+  txt <- .said(.second_pass_item(r, 1L, 1L))
+  expect_false(grepl("last", txt, ignore.case = TRUE))
+})
+
+test_that("the none option no longer promises it will stop asking", {
+  txt <- .said(.second_pass_banner(1L))
+  expect_false(grepl("not be asked again", txt, fixed = TRUE))
+  expect_match(txt, "asked again", fixed = TRUE)     # it says the opposite now
+})
+
+test_that("the table offers the words, not the keystrokes", {
+  lines <- strsplit(.said(.second_pass_banner(1L)), "\n", fixed = TRUE)[[1]]
+  types <- trimws(substr(lines, 1L, 22L))    # the TYPE column, whatever fills it
+  expect_true("none" %in% types)
+  expect_true("skip" %in% types)
+  expect_false(grepl("the single letter n", paste(lines, collapse = " "), fixed = TRUE))
 })
 
 # CLAUDE.md's rule for exactly this decision: "a wrong id is worse than none".
@@ -323,6 +382,38 @@ test_that("the second-pass banner is separate from the per-name card", {
   expect_match(card, "Atoposmia+copelandica+arefacta", fixed = TRUE)   # both links
   expect_match(card, "itis.gov", fixed = TRUE)
   expect_false(grepl("WHAT THIS STEP IS DOING", card, fixed = TRUE))   # not repeated
+})
+
+# "the county checklist" is not a document anyone can go and open. It is Holway's
+# San Diego County bee checklist, v3, published by UC San Diego -- so the banner
+# names it and gives the link, the same way it links iNaturalist and ITIS.
+test_that("the second pass names the checklist and links it", {
+  txt <- .said(.second_pass_banner(6L))
+  expect_match(txt, "Holway", fixed = TRUE)
+  expect_match(txt, "v3", ignore.case = TRUE)
+  expect_match(txt, "https://library.ucsd.edu/dc/collection/bb7305352v", fixed = TRUE)
+})
+
+# The step description said "iNaturalist's number for it" and the rest of the
+# prompt says "taxon_id" -- two names for one thing, and nothing tying them
+# together. Say the word where the thing is first introduced.
+# Two listed reasons, but the common third one was missing: the taxonomy itself
+# changed. A bee split into two, lumped into another, or moved to a different
+# genus is not a respelling and not an absent page -- it is a real revision, and
+# it is the case where the ITIS link actually earns its place.
+test_that("a taxonomy change is listed as a reason a name fails", {
+  txt <- .said(.second_pass_banner(1L))
+  expect_match(txt, "taxonomy changed", ignore.case = TRUE)
+  expect_match(txt, "split|moved", perl = TRUE)
+  expect_false(grepl("one of two things", txt, fixed = TRUE))   # there are three
+})
+
+test_that("the step description names the number as the taxon_id", {
+  lines <- strsplit(.said(.second_pass_banner(1L)), "\n", fixed = TRUE)[[1]]
+  i <- grep("WHAT THIS STEP IS DOING", lines, fixed = TRUE)
+  expect_length(i, 1L)
+  para <- lines[i:(i + 4L)]                        # the heading and its sentence
+  expect_match(paste(para, collapse = " "), "taxon_id", fixed = TRUE)
 })
 
 # The specimen gate names a path but not what any row MEANS or how to fix it, and

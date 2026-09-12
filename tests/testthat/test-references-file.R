@@ -69,6 +69,18 @@ test_that("the data sources are cited, not just the statistics", {
     expect_match(txt, src, fixed = TRUE, info = src)
 })
 
+# Every other data source in the list is reachable -- iNaturalist, IUCN and ITIS
+# all carry a URL. The checklist the whole county tier is built from did not, so
+# a reader was told the name of a document and left to go find it. It is also a
+# nine-author work: citing it as "Holway, D.A." alone drops eight of them.
+test_that("the checklist is cited in full, with its DOI", {
+  txt <- paste(references_text(), collapse = " ")
+  expect_match(txt, "https://doi.org/10.6075/J0NZ88MD", fixed = TRUE)
+  expect_match(txt, "Hung", fixed = TRUE)          # first author
+  expect_match(txt, "Holway", fixed = TRUE)        # last author, and what we call it
+  expect_match(txt, "Version 3", fixed = TRUE)
+})
+
 test_that("the file separates data sources from methods", {
   txt <- paste(references_text(), collapse = "\n")
   expect_match(txt, "DATA SOURCES", fixed = TRUE)

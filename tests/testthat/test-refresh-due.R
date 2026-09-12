@@ -69,11 +69,19 @@ test_that("refresh_overdue is empty when everything is current", {
   expect_equal(length(refresh_overdue(caches, max_age_days = 365)), 0L)
 })
 
-test_that("the REAL caches are both checkable (paths exist and carry dates)", {
+# Every real cache must be CHECKABLE -- refresh_ages() has to return an answer for
+# each, using that entry's own date source. A cache that has genuinely never been
+# dated reports "due" rather than erroring; that is the correct answer, not a failure.
+# (It used to call refresh_due(c$path) directly, ignoring each entry's date_col and
+# dates_fn, which worked only while every cache happened to be a CSV with the same
+# column name.)
+test_that("every real cache reports an age or a reason, using its own date source", {
   old <- setwd(.beescabr_root()); on.exit(setwd(old), add = TRUE)
-  for (c in REFRESH_CACHES) {
-    r <- refresh_due(c$path)
-    expect_false(is.na(r$age_days), info = paste(c$key, "has no usable retrieved_on"))
+  ages <- refresh_ages()
+  expect_equal(length(ages), length(REFRESH_CACHES))
+  for (a in ages) {
+    expect_true(nzchar(a$reason %||% ""), info = a$key)
+    if (is.na(a$age_days)) expect_true(a$due, info = a$key)   # undatable => due
   }
 })
 
@@ -118,4 +126,94 @@ test_that("the prompt states what the refresh needs and what it does NOT need", 
   expect_true(grepl("internet", blob, ignore.case = TRUE))
   expect_true(grepl("token",    blob, ignore.case = TRUE))
   expect_true(grepl("keep|cache", blob, ignore.case = TRUE))
+})
+
+# The age of the reference caches was printed ONLY when something was already over a
+# year old. So for 364 days the run said nothing, and the first word anyone got was
+# the prompt itself -- by which point the data had been stale for a year and the
+# operator had no sense of how long it had been drifting. Print the age every run,
+# so "checked 8 months ago" is visible long before it becomes a decision.
+test_that("every cache is reported, not just the overdue ones", {
+  ages <- list(list(key = "IUCN Red List status", age_days = 40L,  due = FALSE),
+               list(key = "plant common names",   age_days = 400L, due = TRUE))
+  txt <- paste(refresh_age_lines(ages), collapse = "\n")
+  expect_match(txt, "IUCN Red List status", fixed = TRUE)
+  expect_match(txt, "plant common names", fixed = TRUE)
+})
+
+test_that("an age reads in months, not a raw day count", {
+  txt <- paste(refresh_age_lines(list(list(key = "IUCN Red List status",
+                                           age_days = 250L, due = FALSE))), collapse = " ")
+  expect_match(txt, "8 months", fixed = TRUE)
+  expect_false(grepl("250", txt, fixed = TRUE))
+})
+
+test_that("a recent check reads in days", {
+  txt <- paste(refresh_age_lines(list(list(key = "x", age_days = 3L, due = FALSE))),
+               collapse = " ")
+  expect_match(txt, "3 days", fixed = TRUE)
+})
+
+test_that("an overdue cache is marked so it stands out", {
+  txt <- paste(refresh_age_lines(list(list(key = "x", age_days = 400L, due = TRUE))),
+               collapse = " ")
+  expect_match(txt, "due", ignore.case = TRUE)
+})
+
+test_that("a cache that was never fetched says so instead of printing NA", {
+  txt <- paste(refresh_age_lines(list(list(key = "x", age_days = NA_integer_, due = TRUE))),
+               collapse = " ")
+  expect_false(grepl("NA", txt, fixed = TRUE))
+  expect_match(txt, "never", ignore.case = TRUE)
+})
+
+test_that("refresh_ages reports every cache, overdue or not", {
+  caches <- list(list(key = "a", path = tempfile(), tool = "t", needs = "n"),
+                 list(key = "b", path = tempfile(), tool = "t", needs = "n"))
+  a <- refresh_ages(caches)
+  expect_length(a, 2L)
+  expect_equal(vapply(a, function(x) x$key, ""), c("a", "b"))
+})
+
+# REFRESH_CACHES named two caches, so the yearly prompt only ever mentioned IUCN and
+# plant common names -- which is exactly why the other three drifted for years without
+# anyone hearing about it. Two things blocked listing them: the plant name cache
+# carries no date at all, and the bee taxon cache is a DuckDB table, not a CSV.
+test_that("a cache can supply its dates some other way than a CSV column", {
+  r <- refresh_due("ignored.csv", max_age_days = 365, today = as.Date("2026-09-11"),
+                   dates_fn = function() as.Date(c("2025-01-01", "2026-08-01")))
+  expect_true(r$due)                                   # oldest is 2025-01-01
+  expect_equal(r$oldest, as.Date("2025-01-01"))
+})
+
+test_that("a date source that returns nothing is due, not an error", {
+  r <- refresh_due("ignored.csv", dates_fn = function() as.Date(character(0)))
+  expect_true(r$due)
+  expect_match(r$reason, "no usable", fixed = TRUE)
+})
+
+test_that("a date source that fails is due, not a crash", {
+  r <- refresh_due("ignored.csv", dates_fn = function() stop("database is locked"))
+  expect_true(r$due)
+  expect_true(is.na(r$age_days))
+})
+
+test_that("a fresh other-source cache is not due", {
+  r <- refresh_due("ignored.csv", max_age_days = 365, today = as.Date("2026-09-11"),
+                   dates_fn = function() as.Date("2026-09-01"))
+  expect_false(r$due)
+  expect_equal(r$age_days, 10L)
+})
+
+test_that("every cache the pipeline depends on is listed, with a tool that exists", {
+  keys <- vapply(REFRESH_CACHES, function(c) c$key, "")
+  expect_true(any(grepl("IUCN", keys)))
+  expect_true(any(grepl("plant common", keys)))
+  expect_true(any(grepl("plant taxon", keys)))
+  expect_true(any(grepl("bee taxon", keys)))
+  for (c in REFRESH_CACHES) {
+    expect_true(nzchar(c$tool %||% ""), info = c$key)
+    expect_true(file.exists(file.path(.beescabr_root(), c$tool)),
+                info = paste(c$key, "->", c$tool))       # a tool you can actually run
+  }
 })

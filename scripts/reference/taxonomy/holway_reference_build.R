@@ -170,7 +170,7 @@ retry_empty_search <- function(results, term, fetch_fn,
             else paste0("iNat has only a complex (no species/subspecies) for '", cur, "'.")
     message(lead, " Enter an alternate name to search, or 'none' if not found.")
     raw <- trimws(prompt_fn("Alternate search (or 'none'): "))
-    if (raw == "" || raw %in% c("none", "skip")) break
+    if (raw == "" || tolower(raw) %in% c("none", "skip")) break
     cur <- raw
     results <- fetch_fn(cur)
   }
@@ -225,7 +225,7 @@ parse_slash_options <- function(genus, species_raw) {
 # "genus <typed epithet>" so they can supply a current name not in the pair.
 resolve_slash_answer <- function(raw, genus, opts) {
   raw <- trimws(raw)
-  if (raw == "" || raw %in% c("none", "skip")) return(NA_character_)
+  if (raw == "" || tolower(raw) %in% c("none", "skip")) return(NA_character_)
   idx <- suppressWarnings(as.integer(raw))
   if (!is.na(idx) && idx >= 1 && idx <= length(opts)) opts[[idx]] else paste(genus, raw)
 }
@@ -596,20 +596,24 @@ resolve_missing_genera <- function(unresolved_genera, known_gkeys, con,
 #' @return Invisibly NULL; prints.
 .second_pass_banner <- function(n) {
   message("")
-  message("  ", n, " name", if (n == 1) "" else "s", " on the county checklist did not",
-          " match anything on iNaturalist.")
+  message("  ", n, " name", if (n == 1) "" else "s",
+          " on the Holway San Diego County Bee Checklist v3 did not")
+  message("  match anything on iNaturalist.")
+  message("     the checklist   https://library.ucsd.edu/dc/collection/bb7305352v")
   message("")
   message("  WHAT THIS STEP IS DOING")
-  message("    Matching every name on the San Diego County bee checklist to")
-  message("    iNaturalist's number for it, so the pipeline can join on the number")
-  message("    instead of the name. Names get respelled; numbers do not.")
+  message("    Matching every name on that checklist to iNaturalist's number for the")
+  message("    same bee -- its taxon_id -- so the pipeline can join on the taxon_id")
+  message("    instead of the name. Names get respelled; taxon_ids do not.")
   message("")
-  message("  WHY A NAME DOES NOT MATCH -- usually one of two things:")
+  message("  WHY A NAME DOES NOT MATCH -- usually one of three things:")
   message("    * iNaturalist lists it under a different name (renamed, or a synonym)")
+  message("    * the taxonomy changed -- the bee was split, lumped into another, or")
+  message("      moved to a different genus, so it is filed somewhere else now")
   message("    * iNaturalist has no page for it at all, which is normal for some bees")
   message("")
   message("  Each name below comes with two links, already filled in: iNaturalist,")
-  message("  and ITIS -- the US government taxonomy database, which says whether a")
+  message("  and ITIS (the US government taxonomy database), which says whether a")
   message("  name is still accepted and what it was renamed to.")
   message("")
   .row <- function(k, v) message("    ", formatC(k, width = -18), "  ", v)
@@ -618,14 +622,35 @@ resolve_missing_genera <- function(unresolved_genera, known_gkeys, con,
   .row(strrep("-", 18), strrep("-", 46))
   .row("345235", "a number -> becomes this bee's taxon_id. It is the")
   .row("", "  number in inaturalist.org/taxa/345235-Colletes-hyalinus")
-  .row("Genus <corrected>", "a name -> searches iNaturalist for that instead")
-  .row("n", "the single letter n -> records that iNaturalist has")
-  .row("", "  no page for it. You will not be asked again.")
-  .row("<Enter>", "nothing -> skip. You will be asked again next run.")
+  .row("a name", "scientific name, genus, subgenus, complex, species")
+  .row("", "  or subspecies -> searches iNaturalist for that instead")
+  .row("none", "iNaturalist has no page for this bee -> recorded. You")
+  .row("", "  are asked again next run, in case one gets added.")
+  .row("skip", "not sure -> nothing recorded, asked again next run.")
+  .row("", "  Pressing Enter does the same.")
   message("")
   message("  NOT SURE? PRESS ENTER. A wrong taxon_id is worse than none -- it silently")
   message("  attaches this bee's records to a different bee. Skipping costs nothing.")
   invisible(NULL)
+}
+
+#' Is this checklist row one the second pass asks about?
+#'
+#' PURE. Described rows with no iNaturalist id, excluding the slash "A / B" rows the
+#' first pass handles. A previous "no iNaturalist page" answer used to make this FALSE
+#' forever -- but iNaturalist does add bees, and the automatic resolver caches its own
+#' not-found verdict too, so nothing in the pipeline would ever have noticed. Ask every
+#' run; the card says what was answered last time so it does not read as amnesia.
+#'
+#' @param source_sheet The Holway sheet the row came from.
+#' @param species_raw The raw species cell.
+#' @param row The built reference row, or NULL if it could not be built.
+#' @return TRUE if the operator should be asked about this row.
+.second_pass_asks <- function(source_sheet, species_raw, row) {
+  if (!identical(source_sheet, "Described")) return(FALSE)
+  sr <- species_raw; if (is.na(sr)) sr <- ""
+  if (grepl("/", sr, fixed = TRUE)) return(FALSE)
+  !(is.null(row) || !is.na(row$taxon_id))
 }
 
 #' One unresolved name, as a compact card
@@ -633,14 +658,21 @@ resolve_missing_genera <- function(unresolved_genera, known_gkeys, con,
 #' @param r The checklist row (`genus`, `species_raw`, `subgenus`).
 #' @param k Position in the queue.
 #' @param n How many there are in total.
+#' @param prior What was decided last run, from `decision_get()`, or NULL the first
+#'   time. A "no iNaturalist page" answer no longer silences the question, so the
+#'   card has to say the question is a repeat and how long ago it was answered --
+#'   otherwise it reads as the pipeline having forgotten.
 #' @return Invisibly NULL; prints.
-.second_pass_item <- function(r, k, n) {
+.second_pass_item <- function(r, k, n, prior = NULL) {
   label <- trimws(paste(r$genus %||% "", r$species_raw %||% ""))
   subg  <- .strip_parens(r$subgenus %||% NA_character_)
   q     <- gsub(" ", "+", trimws(label))
   message("")
   message(sprintf("  [%d/%d] '%s'%s", k, n, label,
                   if (!is.na(subg)) paste0("  subgenus (", subg, ")") else ""))
+  if (!is.null(prior) && identical(prior$action %||% "", "no_inat_id"))
+    message("     last time you said: no iNaturalist page  (",
+            substr(as.character(prior$decided_at %||% ""), 1, 10), ")")
   message("     iNaturalist  https://www.inaturalist.org/search?q=", q)
   message("     ITIS         https://www.itis.gov/servlet/SingleRpt/SingleRpt",
           "?search_topic=Scientific_Name&search_value=", q)
@@ -654,7 +686,10 @@ resolve_missing_genera <- function(unresolved_genera, known_gkeys, con,
   key   <- holway_search_term(r$source_sheet, r$genus, r$species_raw)
   label <- trimws(paste(r$genus %||% "", r$species_raw %||% ""))
   subg  <- .strip_parens(r$subgenus %||% NA_character_)
-  .second_pass_item(r, .k, .n)
+  # a "no iNaturalist page" answer no longer silences this question, so show what
+  # was answered last time -- otherwise a repeat reads as the pipeline forgetting.
+  prior <- tryCatch(decision_get(con, key), error = function(e) NULL)
+  .second_pass_item(r, .k, .n, prior = prior)
   raw <- trimws(prompt_fn("   > "))
   if (raw == "" || tolower(raw) %in% c("skip", "s")) return(NULL)
   if (tolower(raw) %in% c("n", "no", "noid", "none")) {
@@ -697,18 +732,10 @@ run_described_second_pass <- function(con, holway_df, rows, ancestry,
                                       request_fn = inat_request, prompt_fn = readline,
                                       interactive_ok = TRUE) {
   if (!isTRUE(interactive_ok)) return(list(rows = rows, ancestry = ancestry))
-  # Described + unresolved, but NOT slash "A / B" rows (those prompt in the first pass).
-  is_todo <- function(i) {
-    if (!identical(holway_df$source_sheet[i], "Described")) return(FALSE)
-    sr <- holway_df$species_raw[i]; if (is.na(sr)) sr <- ""
-    if (grepl("/", sr, fixed = TRUE)) return(FALSE)
-    if (is.null(rows[[i]]) || !is.na(rows[[i]]$taxon_id)) return(FALSE)
-    # skip ones already tagged 'no iNat id yet' (cached) -- no re-nagging.
-    d <- tryCatch(decision_get(con, holway_search_term(holway_df$source_sheet[i],
-                    holway_df$genus[i], sr)), error = function(e) NULL)
-    !(!is.null(d) && identical(d$action, "no_inat_id"))
-  }
-  todo <- which(vapply(seq_len(nrow(holway_df)), is_todo, logical(1)))
+  todo <- which(vapply(seq_len(nrow(holway_df)),
+                       function(i) .second_pass_asks(holway_df$source_sheet[i],
+                                                     holway_df$species_raw[i], rows[[i]]),
+                       logical(1)))
   if (length(todo) == 0) return(list(rows = rows, ancestry = ancestry))
 
   .second_pass_banner(length(todo))   # once, not per name
