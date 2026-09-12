@@ -452,3 +452,72 @@ test_that("different explanations still each appear", {
   expect_match(txt, "FIRST THING", fixed = TRUE)
   expect_match(txt, "SECOND THING", fixed = TRUE)
 })
+
+# The rest of holway_reference_build.R. The thread through every one of these is the
+# same: the file asks the operator to IDENTIFY a bee and repeatedly gives them nothing
+# to identify it with -- bare iNaturalist numbers with no link, two names with no
+# indication where either came from, and "skipped." with no word on whether the bee
+# comes back.
+
+test_that("the multi-match list gives a link for every candidate", {
+  txt <- paste(.hrb_candidates(list(
+    list(id = 62881, name = "Andrena quercina", rank = "species"),
+    list(id = 199123, name = "Andrena quercinella", rank = "subspecies"))), collapse = "\n")
+  expect_match(txt, "https://www.inaturalist.org/taxa/62881", fixed = TRUE)
+  expect_match(txt, "https://www.inaturalist.org/taxa/199123", fixed = TRUE)
+  expect_false(grepl("id=", txt, fixed = TRUE))      # never named, never explained
+})
+
+test_that("the multi-match prompt says why there is more than one", {
+  txt <- paste(.hrb_multi_lead("Andrena quercina", 2L), collapse = " ")
+  expect_match(txt, "more than one", ignore.case = TRUE)
+  expect_match(txt, "same name", ignore.case = TRUE)
+})
+
+test_that("the slash prompt says where the two names came from", {
+  txt <- paste(.hrb_slash_lead("Andrena", c("Andrena a", "Andrena b")), collapse = " ")
+  expect_match(txt, "checklist", ignore.case = TRUE)
+  expect_match(txt, "two names", ignore.case = TRUE)
+  expect_match(txt, "which one", ignore.case = TRUE)
+})
+
+test_that("the slash options carry a search link each", {
+  txt <- paste(.hrb_slash_lead("Andrena", c("Andrena a", "Andrena b")), collapse = "\n")
+  expect_match(txt, "inaturalist.org/search?q=Andrena+a", fixed = TRUE)
+})
+
+test_that("the subspecies question says what each answer does", {
+  txt <- paste(.hrb_subspecies_lead("Atoposmia", "copelandica", "arefacta"), collapse = " ")
+  expect_match(txt, "three words", ignore.case = TRUE)
+  expect_match(txt, "inaturalist.org/search", fixed = TRUE)
+  expect_match(txt, "no id", ignore.case = TRUE)      # what answering no costs
+})
+
+test_that("'only a complex' is explained where it is used", {
+  txt <- .hrb_alt_lead(0L, "Stelis anthocopae")
+  expect_match(txt, "nothing", ignore.case = TRUE)
+  txt2 <- .hrb_alt_lead(2L, "Stelis anthocopae")
+  expect_match(txt2, "look-alike", ignore.case = TRUE)
+  expect_false(grepl("complex (no species/subspecies)", txt2, fixed = TRUE))
+})
+
+test_that("the ITIS opener does not name two passes nobody has heard of", {
+  txt <- paste(.hrb_itis_lead("Lasioglossum turgiventre"), collapse = " ")
+  expect_false(grepl("taxon_id passes", txt, fixed = TRUE))
+  expect_match(txt, "checklist", ignore.case = TRUE)
+})
+
+test_that("the ITIS question offers whole words, which .yn has always accepted", {
+  expect_match(.hrb_itis_ask(), "yes", fixed = TRUE)
+  expect_match(.hrb_itis_ask(), "no", fixed = TRUE)
+})
+
+test_that("a skip says whether the bee comes back", {
+  expect_match(.hrb_skipped("no matches"), "asked again", fixed = TRUE)
+  expect_match(.hrb_skipped("no matches"), "no matches", fixed = TRUE)
+})
+
+test_that("the finished-table line says where the file is", {
+  expect_match(.hrb_wrote(1035L, "data/reference/holway_sd_bee_reference_table_v3_generated.csv"),
+               "data/reference/holway_sd_bee_reference_table_v3_generated.csv", fixed = TRUE)
+})

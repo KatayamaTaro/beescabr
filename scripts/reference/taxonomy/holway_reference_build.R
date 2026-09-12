@@ -104,10 +104,7 @@ itis_disposition <- function(term, prompt_fn = readline, interactive_ok = TRUE) 
                 "?search_topic=Scientific_Name&search_value=",
                 gsub(" ", "+", trimws(term)))
   message("")
-  message("  Building the San Diego reference checklist (this is not one of the two")
-  message("  taxon_id passes -- no bee of yours is being judged here).")
-  message("")
-  message("  '", term, "' is on the checklist but has no iNaturalist page.")
+  for (ln in .hrb_itis_lead(term)) message(ln)
   message("")
   message("  That happens for two different reasons, and they need opposite answers:")
   message("    - it is a real bee iNaturalist has simply never published, or")
@@ -122,8 +119,108 @@ itis_disposition <- function(term, prompt_fn = readline, interactive_ok = TRUE) 
   message("    'valid' or 'accepted'  ->  y   real bee; keep it, with no iNaturalist id")
   message("    'invalid', 'not accepted', or nothing found  ->  n   leave it off")
   message("")
-  if (.yn(prompt_fn, "  Valid in ITIS?  [y / n]: ")) "keep" else "skip"
+  if (.yn(prompt_fn, .hrb_itis_ask())) "keep" else "skip"
 }
+
+# ------------------------------------------------------------
+# The questions this file asks, as PURE functions.
+#
+# Every one of them asks the operator to identify a bee, and most of them used to give
+# nothing to identify it with: bare iNaturalist numbers with no link, two names with no
+# word on where either came from, "skipped." with no word on whether the bee returns.
+# Looking the bee up IS the task, so every candidate now carries the page that answers it.
+# ------------------------------------------------------------
+.hrb_url_id   <- function(id) paste0("https://www.inaturalist.org/taxa/", id)
+.hrb_url_name <- function(nm) paste0("https://www.inaturalist.org/search?q=",
+                                     gsub(" ", "+", trimws(nm)))
+
+#' Why there is more than one match, before the list of them
+#' @param term The name searched for.
+#' @param n How many came back.
+#' @return Lines to print.
+.hrb_multi_lead <- function(term, n) c(
+  "",
+  sprintf("  iNaturalist has more than one taxon called '%s' (%d of them).", term, n),
+  "  That usually means the same name is used at two ranks -- a species and the",
+  "  look-alike group it belongs to -- or an old name was kept alongside a new one.",
+  "  Open the links and pick the one that is the bee itself:")
+
+#' The candidate list, each with the page that settles it
+#' @param results iNaturalist taxa.
+#' @return Lines to print.
+.hrb_candidates <- function(results)
+  vapply(seq_along(results), function(i) {
+    t <- results[[i]]
+    sprintf("    %d  %-34s %-11s %s", i, t$name %||% "?", t$rank %||% "?",
+            .hrb_url_id(t$id %||% ""))
+  }, character(1))
+
+#' The checklist lists two names for one bee -- which is current?
+#' @param genus The genus.
+#' @param opts The names offered.
+#' @return Lines to print.
+.hrb_slash_lead <- function(genus, opts) c(
+  "",
+  sprintf("  The county checklist gives two names for this bee: %s.",
+          paste(opts, collapse = " and ")),
+  "  It does that when a bee was renamed and the compilers kept both spellings. Only",
+  "  one is current on iNaturalist. Open them and say which one to use:",
+  vapply(seq_along(opts), function(i)
+    sprintf("    %d  %-34s %s", i, opts[[i]], .hrb_url_name(opts[[i]])), character(1)),
+  "    or type a different name to search, or 'none' to leave it unresolved")
+
+#' Is the third word really a subspecies?
+#' @param genus,species,subspecies The three words.
+#' @return Lines to print.
+.hrb_subspecies_lead <- function(genus, species, subspecies) {
+  full <- paste(genus, species, subspecies)
+  c("",
+    sprintf("  The checklist entry '%s' has three words.", full),
+    "  A third word usually names a subspecies, but it is sometimes a note the",
+    "  compilers added. Only a subspecies gets looked up as one.",
+    sprintf("    %s", .hrb_url_name(full)),
+    "    yes -> looked up as a subspecies of its own",
+    "    no  -> kept on the checklist with no id, and not looked up again")
+}
+
+#' Why a name search is being retried
+#' @param n_results How many the search returned.
+#' @param term The name searched for.
+#' @return One line.
+.hrb_alt_lead <- function(n_results, term) {
+  if (n_results == 0L)
+    sprintf("  iNaturalist returns nothing for '%s'.", term)
+  else
+    sprintf(paste("  iNaturalist only has '%s' as a look-alike group -- a set of bees it",
+                  "cannot tell apart from a photo -- not as a species of its own."), term)
+}
+
+#' The opening line of the ITIS question
+#' @param term The name in question.
+#' @return Lines to print.
+.hrb_itis_lead <- function(term) c(
+  "",
+  "  Building the county checklist. Nothing here is about a bee you recorded --",
+  "  these are names from the published checklist that iNaturalist has no page for.",
+  "",
+  sprintf("  '%s' is one of them.", term))
+
+#' The ITIS question itself
+#' @return The prompt string.
+.hrb_itis_ask <- function() "  Is it valid in ITIS?  [yes / no]: "
+
+#' What a skip means for this bee
+#' @param why Why nothing was recorded.
+#' @return One line.
+.hrb_skipped <- function(why)
+  sprintf("  Nothing recorded (%s) -- this bee stays without an id and is asked again next run.", why)
+
+#' Where the finished reference table was written
+#' @param n Rows written.
+#' @param path Where.
+#' @return One line.
+.hrb_wrote <- function(n, path)
+  sprintf("%s rows -> %s", format(n, big.mark = ","), path)
 
 # ------------------------------------------------------------
 # holway_search_term(): the string to search iNat for a Holway row -- ALSO the
@@ -166,10 +263,9 @@ retry_empty_search <- function(results, term, fetch_fn,
                                prompt_fn = readline, interactive_ok = TRUE) {
   cur <- term
   while (.needs_alt_search(results) && isTRUE(interactive_ok)) {
-    lead <- if (length(results) == 0) paste0("No iNat match for '", cur, "'.")
-            else paste0("iNat has only a complex (no species/subspecies) for '", cur, "'.")
-    message(lead, " Enter an alternate name to search, or 'none' if not found.")
-    raw <- trimws(prompt_fn("Alternate search (or 'none'): "))
+    message(.hrb_alt_lead(length(results), cur))
+    message("  Another name to search for, or 'none' if there is nothing to find.")
+    raw <- trimws(prompt_fn("  name / none: "))
     if (raw == "" || tolower(raw) %in% c("none", "skip")) break
     cur <- raw
     results <- fetch_fn(cur)
@@ -249,12 +345,9 @@ resolve_slash_answer <- function(raw, genus, opts) {
     return(list(taxon_id = as.integer(chosen$id), action = "pick", term = key))
   }
   if (choice$action == "prompt" && interactive_ok) {
-    message("\nMore than one match for '", term, "' -- choose one:")
-    for (i in seq_along(results)) {
-      t <- results[[i]]
-      message(sprintf("  [%d] id=%s %s (%s)", i, t$id, t$name, t$rank %||% "?"))
-    }
-    raw <- trimws(prompt_fn("Pick a number, or 'none' if none fit: "))
+    for (ln in .hrb_multi_lead(term, length(results))) message(ln)
+    for (ln in .hrb_candidates(results)) message(ln)
+    raw <- trimws(prompt_fn("  number / none: "))
     idx <- suppressWarnings(as.integer(raw))
     if (!(raw %in% c("none", "skip")) && !is.na(idx) && idx >= 1 && idx <= length(results)) {
       chosen <- results[[idx]]
@@ -300,10 +393,8 @@ resolve_holway_row <- function(con, source_sheet, genus, species_raw,
     opts <- parse_slash_options(genus, species_raw)
     term <- NA_character_
     if (interactive_ok && length(opts) > 0) {
-      message("'", trimws(paste(genus, species_raw)), "' lists ", length(opts), " names:")
-      for (i in seq_along(opts)) message(sprintf("  [%d] %s", i, opts[[i]]))
-      term <- resolve_slash_answer(prompt_fn("Which to use? (number, a name, or 'none'): "),
-                                   genus, opts)
+      for (ln in .hrb_slash_lead(genus, opts)) message(ln)
+      term <- resolve_slash_answer(prompt_fn("  number / a name / none: "), genus, opts)
     }
     if (is.na(term)) {
       decision_put(con, key, "skip")
@@ -318,8 +409,8 @@ resolve_holway_row <- function(con, source_sheet, genus, species_raw,
 
   # Two-word Described entry: confirm it's really a subspecies.
   if (plan$ask_subspecies && interactive_ok) {
-    if (!.yn(prompt_fn, sprintf("Is '%s %s %s' a subspecies? (y/n): ",
-                                genus, sp$species, sp$subspecies))) {
+    for (ln in .hrb_subspecies_lead(genus, sp$species, sp$subspecies)) message(ln)
+    if (!.yn(prompt_fn, "  Is it a subspecies?  [yes / no]: ")) {
       decision_put(con, key, "tentative")   # not a subspecies -> provisional, blank
       return(list(taxon_id = NA_integer_, action = "tentative", term = key))
     }
@@ -690,7 +781,7 @@ resolve_missing_genera <- function(unresolved_genera, known_gkeys, con,
   # was answered last time -- otherwise a repeat reads as the pipeline forgetting.
   prior <- tryCatch(decision_get(con, key), error = function(e) NULL)
   .second_pass_item(r, .k, .n, prior = prior)
-  raw <- trimws(prompt_fn("   > "))
+  raw <- trimws(prompt_fn("     number / a name / none / skip: "))
   if (raw == "" || tolower(raw) %in% c("skip", "s")) return(NULL)
   if (tolower(raw) %in% c("n", "no", "noid", "none")) {
     decision_put(con, key, "no_inat_id")
@@ -702,7 +793,9 @@ resolve_missing_genera <- function(unresolved_genera, known_gkeys, con,
   if (grepl("^[0-9]+$", raw)) {
     id    <- as.integer(raw)
     taxon <- tryCatch(get_taxon_by_id(con, id, request_fn = request_fn), error = function(e) NULL)
-    if (is.null(taxon)) { message("  no iNat taxon for id ", id, " -- skipped."); return(NULL) }
+    if (is.null(taxon)) {
+      message(.hrb_skipped(paste0("iNaturalist has no taxon ", id)))
+      return(NULL) }
     message(sprintf("  -> id %s = %s (%s)", id, .scalar(taxon$name, "?"),
                     parse_taxon_ranks(taxon)$rank %||% "?"))
     decision_put(con, key, "pick", id)
@@ -711,13 +804,13 @@ resolve_missing_genera <- function(unresolved_genera, known_gkeys, con,
 
   # otherwise a (possibly renamed) name -> search, list candidates, pick one
   results <- tryCatch(get_taxa_by_name(con, raw, request_fn = request_fn), error = function(e) list())
-  if (length(results) == 0) { message("  no matches for '", raw, "' -- skipped."); return(NULL) }
-  for (j in seq_along(results)) {
-    t <- results[[j]]
-    message(sprintf("   [%d] id=%s  %s  (%s)", j, t$id %||% "?", t$name %||% "?", t$rank %||% "?"))
-  }
+  if (length(results) == 0) {
+    message(.hrb_skipped(paste0("nothing found for '", raw, "'")))
+    return(NULL) }
+  for (ln in .hrb_candidates(results)) message(ln)
   pj <- suppressWarnings(as.integer(trimws(prompt_fn("  pick a number (or blank to skip): "))))
-  if (is.na(pj) || pj < 1 || pj > length(results)) { message("  skipped."); return(NULL) }
+  if (is.na(pj) || pj < 1 || pj > length(results)) {
+    message(.hrb_skipped("not one of the numbers offered")); return(NULL) }
   chosen <- results[[pj]]
   full   <- tryCatch(get_taxon_by_id(con, as.integer(chosen$id), request_fn = request_fn),
                      error = function(e) NULL)
@@ -930,5 +1023,5 @@ if (.holway_autorun_ok(environment())) {
   is_anc <- !is.na(ref$source_sheet) & ref$source_sheet == "iNat ancestry"
   message("Wrote ", sum(ref$resolved[!is_anc], na.rm = TRUE), " resolved of ",
           sum(!is_anc), " Holway rows + ", sum(is_anc), " ancestor rows = ",
-          nrow(ref), " total -> ", basename(PATHS$holway_reference))
+          .hrb_wrote(nrow(ref), PATHS$holway_reference))
 }

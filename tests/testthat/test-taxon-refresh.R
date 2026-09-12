@@ -279,3 +279,103 @@ test_that("a typed number wins over take even when both are available", {
   expect_equal(r$action, "id")
   expect_equal(r$id, 901501L)
 })
+
+# The first live run reported: "1184 bee numbers", "re-checking 887 taxa", then
+# "Nothing moved. All 1184 bees are still the taxon they were." Only 887 were
+# compared. The other 297 have no cached taxon record -- their ids arrived on
+# observation rows, never through get_taxon_by_id -- so the sweep skipped them and
+# the closing line claimed them anyway. A sweep that cannot check something must say
+# so, not fold it into the reassuring number.
+test_that("the sweep reports how many it could actually compare", {
+  if (!have_duckdb()) skip("duckdb not installed")
+  con <- store_connect(tempfile(fileext = ".duckdb")); on.exit(store_disconnect(con), add = TRUE)
+  taxon_cache_put(con, taxon_cache_key_id(1L), 1L, tx(1L, "Bombus crotchii"))
+  taxon_cache_put(con, taxon_cache_key_id(2L), 2L, tx(2L, "Andrena quercina"))
+
+  ch <- sweep_taxon_changes(con, c(1L, 2L, 3L, 4L), verbose = FALSE,
+                            sleep_fn = function(...) NULL,
+                            request_fn = function(path, ...) {
+                              hit <- as.integer(strsplit(sub("^taxa/", "", path), ",")[[1]])
+                              list(results = lapply(hit, function(i) tx(i, paste("Bee", i))))
+                            })
+  expect_equal(attr(ch, "n_full"), 2L)
+  expect_equal(attr(ch, "n_partial"), 2L)      # 3 and 4 were never cached
+})
+
+test_that("the counts are still reported when nothing was cached at all", {
+  if (!have_duckdb()) skip("duckdb not installed")
+  con <- store_connect(tempfile(fileext = ".duckdb")); on.exit(store_disconnect(con), add = TRUE)
+  ch <- sweep_taxon_changes(con, c(7L, 8L), verbose = FALSE, sleep_fn = function(...) NULL,
+                            request_fn = function(...) list(results = list()))
+  expect_equal(attr(ch, "n_full"), 0L)
+  expect_equal(attr(ch, "n_partial"), 2L)
+})
+
+test_that("a duplicated id is counted once", {
+  if (!have_duckdb()) skip("duckdb not installed")
+  con <- store_connect(tempfile(fileext = ".duckdb")); on.exit(store_disconnect(con), add = TRUE)
+  taxon_cache_put(con, taxon_cache_key_id(1L), 1L, tx(1L, "Bombus crotchii"))
+  ch <- sweep_taxon_changes(con, c(1L, 1L, 1L), verbose = FALSE, sleep_fn = function(...) NULL,
+                            request_fn = function(...) list(results = list(tx(1L, "Bombus crotchii"))))
+  expect_equal(attr(ch, "n_full"), 1L)
+  expect_equal(attr(ch, "n_partial"), 0L)
+})
+
+# Skipping the uncached ids entirely was too cautious. RETIRED and GONE are facts
+# about the answer iNaturalist gives NOW -- is_active is false, or the id comes back
+# empty -- and neither needs a stored "before". Only renamed and rank-changed do.
+# So an id we have never looked up individually can still be checked for the two
+# categories that actually break joins; deferring that to "next year" left 297 bees
+# unchecked for no reason.
+#
+# A rename is still NOT inferred for those: the only name we hold for them comes from
+# a table that may have assembled it, and comparing an assembled name to iNaturalist's
+# is the identity-by-name mistake this project bans.
+test_that("an uncached id that is now retired is caught this run", {
+  if (!have_duckdb()) skip("duckdb not installed")
+  con <- store_connect(tempfile(fileext = ".duckdb")); on.exit(store_disconnect(con), add = TRUE)
+  ch <- sweep_taxon_changes(con, 42L, verbose = FALSE, sleep_fn = function(...) NULL,
+                            request_fn = function(...) list(results = list(tx(42L, "Dead bee", active = FALSE))))
+  expect_equal(ch$change, "retired")
+  expect_equal(ch$taxon_id, 42L)
+  expect_equal(ch$now, "Dead bee")
+})
+
+test_that("an uncached id iNaturalist does not return is caught this run", {
+  if (!have_duckdb()) skip("duckdb not installed")
+  con <- store_connect(tempfile(fileext = ".duckdb")); on.exit(store_disconnect(con), add = TRUE)
+  ch <- sweep_taxon_changes(con, 42L, verbose = FALSE, sleep_fn = function(...) NULL,
+                            request_fn = function(...) list(results = list()))
+  expect_equal(ch$change, "gone")
+})
+
+test_that("a healthy uncached id is not reported as anything", {
+  if (!have_duckdb()) skip("duckdb not installed")
+  con <- store_connect(tempfile(fileext = ".duckdb")); on.exit(store_disconnect(con), add = TRUE)
+  ch <- sweep_taxon_changes(con, 42L, verbose = FALSE, sleep_fn = function(...) NULL,
+                            request_fn = function(...) list(results = list(tx(42L, "Live bee"))))
+  expect_equal(nrow(ch), 0L)
+})
+
+test_that("an uncached id is never reported as renamed", {
+  if (!have_duckdb()) skip("duckdb not installed")
+  con <- store_connect(tempfile(fileext = ".duckdb")); on.exit(store_disconnect(con), add = TRUE)
+  ch <- sweep_taxon_changes(con, 42L, verbose = FALSE, sleep_fn = function(...) NULL,
+                            request_fn = function(...) list(results = list(tx(42L, "Anything At All"))))
+  expect_false("renamed" %in% ch$change)
+})
+
+test_that("cached and uncached ids are both checked in one pass", {
+  if (!have_duckdb()) skip("duckdb not installed")
+  con <- store_connect(tempfile(fileext = ".duckdb")); on.exit(store_disconnect(con), add = TRUE)
+  taxon_cache_put(con, taxon_cache_key_id(1L), 1L, tx(1L, "Was this"))
+  ch <- sweep_taxon_changes(con, c(1L, 2L), verbose = FALSE, sleep_fn = function(...) NULL,
+                            request_fn = function(path, ...) {
+                              hit <- as.integer(strsplit(sub("^taxa/", "", path), ",")[[1]])
+                              list(results = lapply(hit, function(i)
+                                if (i == 1L) tx(1L, "Now that") else tx(2L, "Gone", active = FALSE)))
+                            })
+  expect_setequal(ch$change, c("renamed", "retired"))
+  expect_equal(attr(ch, "n_full"), 1L)      # only id 1 had history
+  expect_equal(attr(ch, "n_partial"), 1L)   # id 2 was still caught, as retired
+})

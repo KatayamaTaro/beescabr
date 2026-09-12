@@ -77,6 +77,76 @@ local({
 # complex map) against a populated cache. Returns an invisible summary list.
 # backfill_parent_taxonomy() lives in reference/taxonomy_reference.R (sourced above via need()).
 # ------------------------------------------------------------
+
+
+# ------------------------------------------------------------
+# The progress lines this stage prints. PURE, so they can be read and tested without
+# building anything. They were written in the project's own shorthand -- "phantoms",
+# "ancestor rows", "id-bearing taxa", "obs missing coords -- excluded" -- which tells
+# the person who wrote it what happened and tells a supervisor nothing. The only job
+# these lines have is letting someone judge a normal run from a bad one.
+# ------------------------------------------------------------
+.tlb_no_coords <- function(n)
+  sprintf(paste("%s record%s had no location on them, so they are left out of anything",
+                "mapped. They still count everywhere else."),
+          format(n, big.mark = ","), if (n == 1L) "" else "s")
+
+.tlb_complexes <- function(n)
+  sprintf(paste("%s look-alike groups: bees iNaturalist cannot tell apart from a photo,",
+                "so it files them under a group name instead of a species."),
+          format(n, big.mark = ","))
+
+.tlb_reference_base <- function(n_entries, n_ancestors)
+  sprintf(paste("%s bees from the county checklist, plus %s rows for the genus, family and",
+                "order each one sits in."),
+          format(n_entries, big.mark = ","), format(n_ancestors, big.mark = ","))
+
+.tlb_phantoms <- function(n)
+  sprintf(paste("%s hand-added bee%s left out: no specimen and no photo backs %s up any",
+                "longer. %s come back on their own if one turns up again."),
+          n, if (n == 1L) "" else "s", if (n == 1L) "it" else "them",
+          if (n == 1L) "It will" else "They will")
+
+.tlb_additions <- function(n)
+  sprintf(paste("%s bee%s added by hand from data/reference/hand_curated/specimen_additions.csv",
+                "-- collected here but never photographed."),
+          n, if (n == 1L) "" else "s")
+
+.tlb_orphan_genus <- function(names) c(
+  if (length(names) == 1L)
+    "  One hand-added bee cannot be filed: its genus is not in the lookup."
+  else
+    sprintf("  %s hand-added bees cannot be filed: their genus is not in the lookup.",
+            length(names)),
+  paste0("    ", names),
+  "  Add a row for the genus itself to data/reference/hand_curated/specimen_additions.csv,",
+  "  then run the cleaning pipeline again.")
+
+.tlb_subspecies <- function(n) {
+  if (n == 0L) return("none to add -- every bee is already at the rank iNaturalist has it at")
+  sprintf(paste("%s bee%s moved from species to subspecies, using records already",
+                "downloaded -- no extra look-ups"),
+          n, if (n == 1L) "" else "s")
+}
+
+.tlb_lookup_done <- function(n_rows, n_waiting)
+  sprintf("%s bees%s", format(n_rows, big.mark = ","),
+          if (n_waiting > 0L)
+            sprintf(", %s waiting for someone to confirm they belong in San Diego County",
+                    format(n_waiting, big.mark = ",")) else "")
+
+.tlb_offline <- function(n_obs)
+  sprintf(paste("Nothing new was downloaded from iNaturalist this run -- the %s records",
+                "already on this computer were used. (BEESCABR_SKIP_INGEST=1)"),
+          format(n_obs, big.mark = ","))
+
+.tlb_no_reference <- function(f) paste0(
+  "The county checklist has not been matched to iNaturalist yet, so there is nothing\n",
+  "  to build this lookup on. That happens earlier in the cleaning pipeline, so run\n",
+  "  the whole thing rather than this step on its own:\n",
+  '    source("scripts/run_data_cleaning_pipeline.R")\n',
+  "  It writes ", f)
+
 #' Build the bee taxonomy lookup from the cache and the reference tables
 #'
 #' Boundaries are sourced lazily, so merely sourcing this file to define the
@@ -113,14 +183,14 @@ build_taxonomy_lookup <- function(con) {
   # tier is needed here -- PL / CABR tiers lived in legacy_checklists.R (since deleted).
   n_missing_coords <- sum(is.na(bees$latitude) | is.na(bees$longitude))
   if (n_missing_coords > 0)
-    bx_note(n_missing_coords, " obs missing coords -- excluded.")
+    bx_note(.tlb_no_coords(n_missing_coords))
 
   bees_sf <- bees |>
     filter(!is.na(latitude), !is.na(longitude)) |>
     st_as_sf(coords = c("longitude", "latitude"), crs = 4326, remove = FALSE) |>
     st_transform(PROJECT_CRS)
 
-  bx_kv("Bee lookup", "SD County subset…")
+  bx_kv("Bee lookup", "picking out the San Diego County bees…")
   bees_sd_county <- spatial_split(bees_sf, sd_county_boundary, "SD County")
 
   # STEP 4: SD County checklist IN MEMORY -- the lookup's input (never written).
@@ -138,8 +208,8 @@ build_taxonomy_lookup <- function(con) {
     distinct(genus, species, complex, complex_taxon_id)
   dir.create(dirname(PATHS$complex_map), recursive = TRUE, showWarnings = FALSE)
   write_fresh(complex_map, PATHS$complex_map, na = "")
-  bx_cont(nrow(complex_map), " complex species")
-  bx_out(basename(PATHS$complex_map))
+  bx_cont(.tlb_complexes(nrow(complex_map)))
+  bx_out(PATHS$complex_map)
 
   # NOTE: the lookup base is Holway + iNat; curated SPECIMEN-ONLY species are then merged
   # in at STEP 5 below (specimen_additions_to_lookup). Broader CABR specimen evidence still
@@ -153,12 +223,10 @@ build_taxonomy_lookup <- function(con) {
   # Holway sheet for names.
   verified_ids <- load_verified_taxa(PATHS$verified_taxa)
   if (!file.exists(PATHS$holway_reference))
-    stop("Holway reference table not found (", basename(PATHS$holway_reference), "). It is the ",
-         "base of the taxonomy lookup -- build it first (run_data_cleaning_pipeline.R step 1b, or ",
-         "holway_reference_build.R).")
+    stop(.tlb_no_reference(PATHS$holway_reference), call. = FALSE)
   holway_resolved <- readr::read_csv(PATHS$holway_reference, show_col_types = FALSE)
-  bx_cont("Holway base from reference table: ", basename(PATHS$holway_reference),
-          " (", sum(!is.na(holway_resolved$taxon_id)), " resolved taxa)")
+  bx_cont(sum(!is.na(holway_resolved$taxon_id)),
+          " of the county checklist's bees already have an iNaturalist number.")
   # The reference table now CONTAINS the ancestor taxa as their own rows (tagged
   # source_sheet == "iNat ancestry"). Split them out: the Holway ENTRIES are the
   # lookup's base (unchanged behavior); the ancestor rows are the id source that
@@ -168,8 +236,7 @@ build_taxonomy_lookup <- function(con) {
                     holway_resolved$source_sheet == "iNat ancestry"
   holway_entries <- holway_resolved[!is_ancestry, , drop = FALSE]
   ancestry_ids   <- ancestry_ids_from_reference(holway_resolved)
-  bx_cont("Reference base: ", nrow(holway_entries), " Holway entries + ",
-          sum(is_ancestry), " ancestor rows (", nrow(ancestry_ids), " id-bearing taxa).")
+  bx_cont(.tlb_reference_base(nrow(holway_entries), sum(is_ancestry)))
   bee_taxonomy_lookup <- build_bee_taxonomy_lookup(holway_entries, cl_sd, bees,
                                                    verified_ids = verified_ids,
                                                    ancestry_ids = ancestry_ids)
@@ -187,17 +254,16 @@ build_taxonomy_lookup <- function(con) {
   .n0 <- nrow(.adds)
   .adds <- drop_phantom_additions(.adds, .rd_ev(PATHS$specimen_clean), .rd_ev(PATHS$inat_clean))
   if (nrow(.adds) < .n0)
-    bx_cont("Specimen additions: skipped ", .n0 - nrow(.adds), " phantom(s) with no current specimen/iNat evidence")
+    bx_cont(.tlb_phantoms(.n0 - nrow(.adds)))
   if (nrow(.adds)) {
     .merged <- specimen_additions_to_lookup(bee_taxonomy_lookup, .adds)
     bee_taxonomy_lookup <- .merged$lookup
-    bx_cont("Specimen additions: appended ", nrow(.merged$added), " new taxa.")
+    bx_cont(.tlb_additions(nrow(.merged$added)))
     # Only a MISSING GENUS orphans a species; higher lineage ranks lacking a standalone lookup row
     # is normal (the lookup stores genus-and-below), so those are not flagged.
     .mp_g <- .merged$missing_parents[.merged$missing_parents$missing_parent_rank == "genus", , drop = FALSE]
     if (nrow(.mp_g)) {
-      message("  WARNING: added taxa whose GENUS is not in the lookup (orphaned -- add the genus too):")
-      print(as.data.frame(.mp_g))
+      for (ln in .tlb_orphan_genus(.mp_g$scientific_name)) message(ln)
     }
   }
   # Fill any STILL-missing taxon_ids by iNaturalist name-search (Holway-only taxa never observed in
@@ -240,15 +306,19 @@ build_taxonomy_lookup <- function(con) {
     }
     before <- nrow(bee_taxonomy_lookup)
     out <- subspecies_from_cache(bee_taxonomy_lookup, fetch)
-    bx_kv("Subspecies from cache", nrow(out) - before, " added")
+    bx_kv("Subspecies", .tlb_subspecies(nrow(out) - before))
     out
-  }, error = function(e) { bx_note("subspecies-from-cache skipped: ", conditionMessage(e)); bee_taxonomy_lookup })
+  }, error = function(e) {
+    bx_note("Could not fill in subspecies from the records already downloaded, so any ",
+            "subspecies stay at species level. The rest of the run is unaffected. (",
+            conditionMessage(e), ")")
+    bee_taxonomy_lookup })
 
   bee_taxonomy_lookup <- backfill_parent_taxonomy(bee_taxonomy_lookup)
   write_fresh(decorate_complex_name(decorate_complex(bee_taxonomy_lookup)), PATHS$taxonomy_lookup, na = "")
-  bx_kv("Bee lookup", format(nrow(bee_taxonomy_lookup), big.mark = ","), " rows (",
-        sum(!bee_taxonomy_lookup$verified), " unverified)")
-  bx_out(basename(PATHS$taxonomy_lookup))
+  bx_kv("Bee lookup", .tlb_lookup_done(nrow(bee_taxonomy_lookup),
+                                      sum(!bee_taxonomy_lookup$verified)))
+  bx_out(PATHS$taxonomy_lookup)
 
   invisible(list(lookup = nrow(bee_taxonomy_lookup)))
 }
@@ -261,7 +331,7 @@ if (!exists("BEESCABR_SOURCED_BY_RUNNER") && sys.nframe() == 0) {
     con <- store_connect()
     on.exit(store_disconnect(con), add = TRUE)
     if (Sys.getenv("BEESCABR_SKIP_INGEST", "0") != "1") ingest_observations(con)
-    else bx_note("BEESCABR_SKIP_INGEST=1 -- using existing cache (", count_observations(con), " obs)")
+    else bx_note(.tlb_offline(count_observations(con)))
     build_taxonomy_lookup(con)
   }
   main()

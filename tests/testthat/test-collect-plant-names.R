@@ -81,3 +81,76 @@ test_that("interactive review files a typo under its canonical and adds a new pl
   iso <- cw2$specimen_label_variants[cw2$name == "Isocoma menziesii"]
   expect_true(grepl("isacoma menziesii", tolower(iso)))
 })
+
+# This prompt fires during a NORMAL cleaning run (run_data_cleaning_pipeline.R:404),
+# so it is not something anyone opts into. "Canonical" appears seven times and is
+# never defined; it never says what the step is for, never names the file it edits,
+# offers an unrelated plant as a "nearest" match with no idea how near, and prints
+# "No changes written." at the exact moment the operator did something.
+said <- function(expr) gsub("[[:space:]]+", " ", paste(capture.output(expr), collapse = " "))
+.run1 <- function(answers, labels = c("Isacoma menziesii", "Salvia apiana"), write = FALSE) {
+  cwp <- .mk_cw(tempfile(fileext = ".csv"))
+  sp  <- .mk_spec(tempfile(fileext = ".csv"), labels)
+  pl  <- .mk_plant(tempfile(fileext = ".csv"), character(0))
+  i <- 0
+  said(review_plant_names(cw_path = cwp, specimen_clean_path = sp, plant_clean_path = pl,
+                          interactive_ok = TRUE, write = write,
+                          prompt_fn = function(p) { i <<- i + 1; answers[min(i, length(answers))] }))
+}
+
+test_that("the opening says what this step is FOR", {
+  txt <- .run1("q")
+  expect_match(txt, "another spelling of a plant we have", fixed = TRUE)
+})
+
+test_that("it names the file it is about to change", {
+  expect_match(.run1("q"), CPN_CW, fixed = TRUE)
+})
+
+test_that("'canonical' is never used as an undefined word", {
+  expect_false(grepl("canonical", .run1("q"), ignore.case = TRUE))
+})
+
+test_that("the help explains the job, not just the keys", {
+  txt <- said(.cpn_help())
+  expect_false(grepl("canonical", txt, ignore.case = TRUE))
+  expect_match(txt, CPN_CW, fixed = TRUE)
+})
+
+test_that("an offered match says how close it is, so a sage is not filed under a goldenbush", {
+  txt <- .run1("q", labels = "Salvia apiana")
+  expect_match(txt, "%", fixed = TRUE)      # a closeness figure on each option
+})
+
+test_that("pressing Enter with no guess says what to do instead", {
+  txt <- .run1(c("", "q"), labels = "Salvia apiana")
+  expect_match(txt, "add it as a new plant|skip", ignore.case = TRUE)
+  expect_false(grepl("no suggestion", txt, fixed = TRUE))
+})
+
+test_that("an unrecognized answer says what the valid ones were", {
+  txt <- .run1(c("banana", "q"))
+  expect_false(grepl("^ [?] didn't understand", txt))
+  expect_match(txt, "asked about it again", ignore.case = TRUE)
+})
+
+test_that("nothing saved says WHY nothing was saved", {
+  expect_match(.run1("q"), "nothing to save|did not change|no answers", ignore.case = TRUE)
+})
+
+test_that("the sourced-by-hand line says what the command does", {
+  txt <- paste(.cpn_sourced_hint(), collapse = " ")
+  expect_false(grepl("^Sourced", txt))
+  expect_match(txt, "review_plant_names()", fixed = TRUE)
+  expect_match(txt, "plant", ignore.case = TRUE)
+})
+
+test_that("Enter is only offered when there is a guess to accept", {
+  txt <- .run1("q", labels = "Salvia apiana")            # nothing close enough to guess
+  expect_match(txt, "no guess, so Enter does nothing", fixed = TRUE)
+  expect_false(grepl("Enter=yes", txt, fixed = TRUE))
+})
+
+test_that("the help does not refer to a marker the card no longer prints", {
+  expect_false(grepl("marked *", said(.cpn_help()), fixed = TRUE))
+})

@@ -71,9 +71,13 @@ if (!length(.rti_all)) {
   on.exit(try(store_disconnect(.rti_con), silent = TRUE), add = TRUE)
   changed <- sweep_taxon_changes(.rti_con, .rti_all)
 
+  n_full    <- attr(changed, "n_full") %||% length(.rti_all)
+  n_partial <- attr(changed, "n_partial") %||% 0L
+
   message("")
   if (!nrow(changed)) {
-    message("  Nothing moved. All ", length(.rti_all), " bees are still the taxon they were.")
+    message("  Nothing moved. All ", length(.rti_all), " bees are still published on iNaturalist,")
+    message("  and the ", n_full, " we hold a record for still have the name they had.")
   } else {
     dir.create(dirname(PATHS$taxon_changes_review), recursive = TRUE, showWarnings = FALSE)
     write_csv(changed, PATHS$taxon_changes_review)
@@ -228,6 +232,21 @@ if (!length(.rti_all)) {
     message("")
     message("  Everything that moved, including what you settled:")
     message("  ", PATHS$taxon_changes_review)
+  }
+
+  # The ids we could NOT compare: they arrived on observation rows, so nothing was
+  # ever fetched for them individually and there is no "before" to check against.
+  # Fetching them now costs a few requests and makes them comparable NEXT time --
+  # otherwise they sit permanently outside this sweep, and the reassuring number
+  # quietly excludes them forever.
+  if (n_partial) {
+    message("")
+    message("  ", n_partial, " of the ", length(.rti_all), " were checked only for being retired or removed:")
+    message("  we hold no earlier record of them, so a change of NAME could not be spotted.")
+    message("  Saving their records now, so next year's check can see that too.")
+    n_got <- tryCatch(prefetch_taxa(.rti_con, .rti_all, verbose = TRUE),
+                      error = function(e) { message("    could not: ", conditionMessage(e)); 0L })
+    message("    ", n_got, " now on file.")
   }
   message("")
 }

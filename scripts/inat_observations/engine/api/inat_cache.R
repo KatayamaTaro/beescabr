@@ -156,7 +156,9 @@ if (!exists("answer_is")) source("scripts/utils/answers.R")
 #' @param throttle Seconds between batches.
 #' @param sleep_fn Injection point for the wait, so tests do not sleep.
 #' @param verbose Print progress.
-#' @return What `taxon_changes()` returns: the changed taxa only.
+#' @return What `taxon_changes()` returns: the changed taxa only, carrying `n_full`
+#'   (compared against a stored record, so a rename is detectable) and `n_partial`
+#'   (asked about, but only retirement and disappearance are provable).
 sweep_taxon_changes <- function(con, taxon_ids, request_fn = inat_request,
                                 throttle = INAT_THROTTLE_SEC, sleep_fn = Sys.sleep,
                                 verbose = TRUE) {
@@ -164,12 +166,25 @@ sweep_taxon_changes <- function(con, taxon_ids, request_fn = inat_request,
   ids <- ids[!is.na(ids)]
   before <- Filter(Negate(is.null),
                    lapply(ids, function(i) taxon_cache_get(con, taxon_cache_key_id(i))))
-  if (!length(before)) return(taxon_changes(list(), list()))
-  known <- vapply(before, function(t) suppressWarnings(as.integer(t$id %||% NA)), integer(1))
+  cached_ids <- vapply(before, function(t) suppressWarnings(as.integer(t$id %||% NA)), integer(1))
+  # An id with no cached record has no "before", so a RENAME cannot be detected for it.
+  # But RETIRED and GONE are facts about the answer iNaturalist gives now -- is_active
+  # is false, or the id returns nothing -- and need no before at all. Skipping those ids
+  # entirely left 297 of 1184 bees unchecked for the two categories that actually break
+  # joins. Every id is asked about; only the name comparison needs history.
+  # Every id is asked about, so "skipped" would be the wrong word. What differs is how
+  # much can be PROVEN: with history, a rename is detectable too; without it, only
+  # retirement and disappearance are.
+  coverage <- function(x) {
+    attr(x, "n_full")    <- length(before)                    # compared against history
+    attr(x, "n_partial") <- length(ids) - length(before)      # retired/gone only
+    x
+  }
+  if (!length(ids)) return(coverage(taxon_changes(list(), list())))
 
-  batches <- split(known, ceiling(seq_along(known) / TAXA_BATCH_SIZE))
+  batches <- split(ids, ceiling(seq_along(ids) / TAXA_BATCH_SIZE))
   if (verbose) message(sprintf("  re-checking %d taxa with iNaturalist in %d batch(es) of <=%d",
-                               length(known), length(batches), TAXA_BATCH_SIZE))
+                               length(ids), length(batches), TAXA_BATCH_SIZE))
   after <- list()
   for (i in seq_along(batches)) {
     got <- tryCatch(inat_fetch_taxa_by_ids(batches[[i]], request_fn = request_fn),
@@ -179,7 +194,32 @@ sweep_taxon_changes <- function(con, taxon_ids, request_fn = inat_request,
     for (t in got) if (!is.null(t$id)) taxon_cache_put(con, taxon_cache_key_id(t$id), t$id, t)
     if (i < length(batches) && !is.null(throttle) && throttle > 0) sleep_fn(throttle)
   }
-  taxon_changes(before, after)
+  # the ids we hold history for: full comparison
+  out <- taxon_changes(before, after)
+  # the rest: only what the fresh answer proves on its own
+  fresh <- setdiff(ids, cached_ids)
+  if (length(fresh)) {
+    got <- stats::setNames(after, vapply(after, function(t)
+      as.character(suppressWarnings(as.integer(t$id %||% NA))), character(1)))
+    add <- lapply(fresh, function(id) {
+      t <- got[[as.character(id)]]
+      if (is.null(t))
+        return(data.frame(taxon_id = id, change = "gone", was = NA_character_,
+                          now = NA_character_, rank_was = NA_character_,
+                          rank_now = NA_character_, replaced_by = NA_character_,
+                          stringsAsFactors = FALSE))
+      if (isTRUE(t$is_active %||% TRUE)) return(NULL)   # alive: nothing provable
+      syn <- unlist(t$current_synonymous_taxon_ids %||% list())
+      data.frame(taxon_id = id, change = "retired", was = NA_character_,
+                 now = as.character(t$name %||% NA), rank_was = NA_character_,
+                 rank_now = as.character(t$rank %||% NA),
+                 replaced_by = if (length(syn)) paste(syn, collapse = ",") else NA_character_,
+                 stringsAsFactors = FALSE)
+    })
+    add <- Filter(Negate(is.null), add)
+    if (length(add)) out <- rbind(out, do.call(rbind, add))
+  }
+  coverage(out)
 }
 
 # ------------------------------------------------------------

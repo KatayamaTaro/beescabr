@@ -63,7 +63,65 @@ test_that("a missing token keeps both halves of its sentence", {
 
 test_that("both missing reports both, and the count leads", {
   txt <- paste(.iucn_skip_note(need_n = 3L, has_pkg = FALSE, has_key = FALSE), collapse = " ")
-  expect_match(txt, "3 species", fixed = TRUE)
+  expect_match(txt, "3 bees", fixed = TRUE)      # "species" is the code's word, not a person's
   expect_match(txt, "rredlist", fixed = TRUE)
   expect_match(txt, "api.iucnredlist.org", fixed = TRUE)
+})
+
+# The most consequential messages in the audit. When the Red List cannot be reached,
+# enrich_iucn_columns() writes "NE" / "Not Evaluated" onto EVERY bee (lines 237-238),
+# so Bombus crotchii -- genuinely Endangered -- goes onto the public field guide
+# reading "Not Evaluated". All the operator saw was "!! IUCN enrichment skipped:".
+#
+# And one message was simply false: with no token it said "using the cached values",
+# but `need` is exactly the species with NO cached value. Wrong in the reassuring
+# direction is the worst kind.
+src("reference/enrich_lookups.R")
+
+test_that("a skipped status pass says what it did to the table", {
+  txt <- paste(.iucn_skipped_note("no internet"), collapse = " ")
+  expect_match(txt, "Not Evaluated", fixed = TRUE)
+  expect_match(txt, "every bee", ignore.case = TRUE)
+  expect_match(txt, "do not publish|not publish", ignore.case = TRUE)
+})
+
+test_that("the no-token note does not claim cached values it does not have", {
+  txt <- paste(.iucn_skip_note(3L, has_pkg = TRUE, has_key = FALSE), collapse = " ")
+  expect_false(grepl("using the cached values", txt, fixed = TRUE))
+  expect_match(txt, "never been looked up|no status", ignore.case = TRUE)
+})
+
+test_that("species that DO have a cached value are described as that", {
+  txt <- paste(.iucn_skip_note(3L, has_pkg = FALSE, has_key = TRUE), collapse = " ")
+  expect_match(txt, "rredlist", fixed = TRUE)
+})
+
+test_that("the no-token note does not promise a prompt that already happened", {
+  txt <- paste(.iucn_skip_note(3L, has_pkg = TRUE, has_key = FALSE), collapse = " ")
+  expect_false(grepl("pipeline will ask for it", txt, fixed = TRUE))
+})
+
+test_that("a partial failure says whether the result is usable", {
+  txt <- paste(.iucn_partial_note(8L, 40L, auth = FALSE), collapse = " ")
+  expect_match(txt, "32", fixed = TRUE)          # the ones that worked
+  expect_match(txt, "unchanged", ignore.case = TRUE)
+})
+
+test_that("a rejected key is told apart from an outage, with a next step each", {
+  expect_match(paste(.iucn_partial_note(40L, 40L, auth = TRUE), collapse = " "),
+               "token", ignore.case = TRUE)
+  expect_match(paste(.iucn_partial_note(40L, 40L, auth = FALSE), collapse = " "),
+               "try again", ignore.case = TRUE)
+})
+
+test_that("the cache line names a file you can open", {
+  expect_match(.iucn_cache_note(412L, "data/checklists/iucn/iucn_status_generated.csv"),
+               "data/checklists/iucn/iucn_status_generated.csv", fixed = TRUE)
+})
+
+test_that("plant common names say what is missing and what it costs", {
+  txt <- paste(.pgc_unresolved_note(12L), collapse = " ")
+  expect_false(grepl("unresolved", txt, fixed = TRUE))
+  expect_false(grepl("local seed", txt, fixed = TRUE))
+  expect_match(txt, "Latin", ignore.case = TRUE)     # what the reader will see instead
 })
