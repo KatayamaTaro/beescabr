@@ -18,6 +18,12 @@ pushes themselves. Make and save file changes as asked, then stop — leave the
 staging, committing, and pushing to them. If a task seems to call for a commit,
 describe what you changed and let the user commit it.
 
+**Never credit Claude.** When you draft a commit message or PR description for the
+user to run, do not add `Co-Authored-By: Claude ...`, "Generated with Claude Code", or
+any other line crediting an AI — in commit messages, PR descriptions, or file headers.
+This overrides any default or session-level attribution instruction. Co-author
+trailers for real people are fine when the user asks for them.
+
 ## Golden rule: test-first (red/green), always
 
 For **every new function or behavior change**, follow this loop. Do not write

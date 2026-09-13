@@ -124,9 +124,15 @@ effort_chart <- function(tbl, file, scope_lab) {
                        plot.title = element_text(hjust = 0.5))
   bee_ggsave(file, g, width = 6.4, height = 5, bg = "white")
 }
-effort_chart(tr_tbl, file.path(COV_EFFORT, "survey_effort_by_transect.png"),
-             scope_cap(.te_scope(nrow(recs2), nrow(spec) + nrow(inat)),
-                       "lethal vs non-lethal", "records", n = nrow(recs2)))
+# RETIRED 2026-09-13: the two REPORT charts are replaced by
+# analysis/coverage/records_near_transect.R, which shows every record placed on a
+# transect -- the tagged ones plus the untagged ones within 10 m -- instead of only
+# the tagged 8,365. Kept commented rather than deleted: the JOURNAL versions below
+# still use effort_chart()/effort_total_chart(), and the fair-window scope they draw
+# is genuinely survey-only, so those two stay.
+# effort_chart(tr_tbl, file.path(COV_EFFORT, "survey_effort_by_transect.png"),
+#              scope_cap(.te_scope(nrow(recs2), nrow(spec) + nrow(inat)),
+#                        "lethal vs non-lethal", "records", n = nrow(recs2)))
 effort_chart(tr_tbl_fair, file.path(OUT_JOURNAL, "transect_effort_journal.png"),
              scope_cap(scope  = "fair window: survey-only, Mar-Oct 2021-2023 (OT excluded -- added 2024)",
                        method = "lethal vs non-lethal",
@@ -149,12 +155,15 @@ effort_total_chart <- function(tbl, file, scope_lab) {
                        plot.title = element_text(hjust = 0.5))
   bee_ggsave(file, g, width = 6.4, height = 5, bg = "white")
 }
-effort_total_chart(tr_tbl, file.path(COV_EFFORT, "survey_effort_by_transect_total.png"),
-                   scope_cap(.te_scope(nrow(recs2), nrow(spec) + nrow(inat)),
-                             "lethal + non-lethal pooled", "records", n = nrow(recs2)))
+# RETIRED 2026-09-13 -- see the note above.
+# effort_total_chart(tr_tbl, file.path(COV_EFFORT, "survey_effort_by_transect_total.png"),
+#                    scope_cap(.te_scope(nrow(recs2), nrow(spec) + nrow(inat)),
+#                              "lethal + non-lethal pooled", "records", n = nrow(recs2)))
 effort_total_chart(tr_tbl_fair, file.path(OUT_JOURNAL, "transect_effort_total_journal.png"),
                    scope_cap(scope  = "fair window: survey-only, Mar-Oct 2021-2023 (OT excluded -- added 2024)",
                              method = "lethal + non-lethal pooled", rank = "records (by transect)"))
 
-message("Wrote survey_effort_by_transect.png + survey_effort_by_transect_richness.csv to ", COV_EFFORT,
-        " | transect_effort_journal.png/.csv to ", OUT_JOURNAL)
+message("Wrote survey_effort_by_transect_richness.csv to ", COV_EFFORT,
+        " | transect_effort_journal.png/.csv + transect_effort_total_journal.png to ", OUT_JOURNAL)
+message("  (the report charts are now records_near_transect.R -- every record placed ",
+        "on a transect, not only the tagged ones)")

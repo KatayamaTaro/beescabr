@@ -173,6 +173,30 @@ g <- ggplot(tbl, aes(transect, value, fill = method)) +
         plot.subtitle = element_text(size = 8.5))
 bee_ggsave(file.path(RNT_OUT, "records_near_transect.png"), g, width = 6.4, height = 5, bg = "white")
 
+# Second version: one bar per transect in the house transect colours, pooled across
+# method. Same figure, same numbers, different question -- "how much is on each
+# transect" rather than "how was it collected". BEE_TRANSECT is the house colour per
+# transect, so a transect is the same colour here as on every other transect figure,
+# and the legend sits in the same top strip as the method legend so the two line up
+# side by side on a slide.
+g_total <- ggplot(tot, aes(transect, n_records, fill = transect)) +
+  geom_col(width = 0.66) +
+  geom_text(aes(label = format(n_records, big.mark = ",")), vjust = -0.35, size = 3,
+            colour = BEE_INK$secondary) +
+  scale_fill_manual(values = BEE_TRANSECT, name = NULL) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.13))) +
+  labs(title = "Bee records by transect",
+       subtitle = "Every record placed on a transect, not only the ones tagged as surveys.",
+       x = "transect", y = "records",
+       caption = str_wrap(near_transect_caption(RNT_BUFFER_M, n_assigned, n_ambiguous,
+                                                n_unassigned, n_tagged + n_spec), 74)) +
+  theme_beescabr(11) +
+  theme(axis.text = element_text(size = 7, colour = BEE_INK$muted),
+        legend.position = "top", plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(size = 8.5))
+bee_ggsave(file.path(RNT_OUT, "records_near_transect_total.png"), g_total,
+           width = 6.4, height = 5, bg = "white")
+
 message(sprintf("  %s tagged + %s placed within %d m = %s on a transect; %s further away.",
                 format(n_tagged, big.mark = ","), format(n_assigned, big.mark = ","),
                 RNT_BUFFER_M, format(n_tagged + n_assigned, big.mark = ","),
