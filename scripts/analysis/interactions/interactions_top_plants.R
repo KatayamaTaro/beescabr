@@ -114,33 +114,25 @@ rank_lab <- setNames(lapply(seq_along(top_m), function(i) {
 }), top_m)
 
 bee_png(file.path(OUT_DIR, "interactions_top_plants_by_month.png"),
-    width = 2300, height = 1050, res = 200)
+        width = 1900, height = 950, res = 200)
 bee_base_par()
-op <- par(mar = c(4, 19, 4.8, 7), oma = c(3.6, 0, 0, 0))     # wide left margin for labels; right margin for legend; bottom oma fits the 3-line caption; top fits title + takeaway
+op <- par(mar = c(4, 17, 1, 6), oma = c(0, 0, 0, 0))   # shrunk: no title/caption reserved anymore
 Mplot  <- Mmon[nrow(Mmon):1, , drop = FALSE]
-ramp_m <- grDevices::colorRampPalette(BEE_SEQ)(24)   # non-urgent magnitude = teal ramp
+ramp_m <- grDevices::colorRampPalette(BEE_SEQ)(24)
 image(x = 1:12, y = seq_len(nrow(Mplot)), z = t(log1p(Mplot)),
       col = ramp_m, axes = FALSE, xlab = "", ylab = "",
       main = "")
-mtext(sprintf("When are the top %d bee plants in use?", TOP_MONTH), side = 3, line = 2.6, font = 2, cex = 1.05, col = BEE_INK$primary)
-mtext("The top plants bloom into use at different times -- forage shifts across the season.", side = 3, line = 1.4, cex = 0.78, col = BEE_INK$secondary)   # takeaway
-mtext("log records/month; y-axis ranked by the bees' favorite (1 = most visit records)",
-      side = 3, line = 0.4, cex = 0.75, col = BEE_INK$secondary)
-axis(1, 1:12, month.abb, las = 2, cex.axis = 0.8)
-axis(2, seq_len(nrow(Mplot)), labels = as.expression(rank_lab[rownames(Mplot)]), las = 1, cex.axis = 0.66)
-mtext("month", side = 1, line = 2.6, cex = 0.85, col = BEE_INK$secondary)
-# color-scale legend (right margin): pale = few / no records, dark = many that month
-lx0 <- grconvertX(0.905, "ndc", "user"); lx1 <- grconvertX(0.925, "ndc", "user")
-ly0 <- grconvertY(0.34, "ndc", "user");  ly1 <- grconvertY(0.66, "ndc", "user")
+axis(1, 1:12, month.abb, las = 2, cex.axis = 1.0)
+axis(2, seq_len(nrow(Mplot)), labels = as.expression(rank_lab[rownames(Mplot)]), las = 1, cex.axis = 0.85)
+mtext("month", side = 1, line = 2.6, cex = 1.0, col = BEE_INK$secondary)
+
+# color-scale legend
+lx0 <- grconvertX(0.90, "ndc", "user"); lx1 <- grconvertX(0.925, "ndc", "user")
+ly0 <- grconvertY(0.30, "ndc", "user");  ly1 <- grconvertY(0.70, "ndc", "user")
 nb  <- length(ramp_m); ys <- seq(ly0, ly1, length.out = nb + 1)
 rect(lx0, ys[-(nb + 1)], lx1, ys[-1], col = ramp_m, border = NA, xpd = NA)
 rect(lx0, ly0, lx1, ly1, border = BEE_INK$secondary, lwd = 0.8, xpd = NA)
-text(lx1, ly1, sprintf(" %s", format(max(Mmon), big.mark = ",")), pos = 4, offset = 0.15, xpd = NA, cex = 0.64, col = BEE_INK$secondary)
-text(lx1, ly0, " 0",                                              pos = 4, offset = 0.15, xpd = NA, cex = 0.64, col = BEE_INK$secondary)
-text((lx0 + lx1) / 2, ly1, "records/month", pos = 3, offset = 0.5, xpd = NA, cex = 0.64, col = BEE_INK$secondary)
-bee_caption_base(scope = "all records, whole park; per-month bee-visit records (log-scaled)",
-                 method = "lethal + non-lethal pooled", rank = "plant genus")
+text(lx1, ly1, sprintf(" %s", format(max(Mmon), big.mark = ",")), pos = 4, offset = 0.15, xpd = NA, cex = 0.75, col = BEE_INK$secondary)
+text(lx1, ly0, " 0", pos = 4, offset = 0.15, xpd = NA, cex = 0.75, col = BEE_INK$secondary)
+text((lx0 + lx1) / 2, ly1, "records/month", pos = 3, offset = 0.5, xpd = NA, cex = 0.75, col = BEE_INK$secondary)
 par(op); dev.off()
-
-message("\nWrote interactions_top_plants.csv (+_by_month.csv) and two figures to ",
-        normalizePath(OUT_DIR))

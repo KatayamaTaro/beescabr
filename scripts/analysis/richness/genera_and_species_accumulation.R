@@ -172,29 +172,24 @@ plot_accumulation_combined <- function(file) {
   xmax <- max(vapply(all_sac, function(s) max(s$sites),    numeric(1)))
   ymax <- max(vapply(all_sac, function(s) max(s$richness), numeric(1)))
   lty_rank <- c(genera = 2, species = 1)                      # house rule: genera dashed, species solid
-
-  bee_png(file, width = 1900, height = 1250, res = 200); on.exit(dev.off())
+  
+  bee_png(file, width = 2200, height = 1600, res = 200); on.exit(dev.off())
   bee_base_par()                     # house-style fonts + muted axis/label colors
-  op <- par(mar = c(4.2, 4.4, 5.0, 1), oma = c(4.6, 0, 0, 0))   # bottom oma room for the wrapped scope caption
-  plot(NA, xlim = c(0, xmax), ylim = c(0, ymax), xlab = "surveys", ylab = "number of unique taxa")
+  op <- par(mar = c(4.6, 5.0, 1.5, 1.5), oma = c(0, 0, 0, 0))
+  plot(NA, xlim = c(0, xmax), ylim = c(0, ymax), xlab = "surveys", ylab = "number of unique taxa",
+       cex.lab = 1.15, cex.axis = 1.05)
   for (rk in names(ranks))                                    # overlay both ranks: color = transect, style = rank
     for (tr in names(sac_by_rank[[rk]]))
       lines(sac_by_rank[[rk]][[tr]]$sites, sac_by_rank[[rk]][[tr]]$richness,
-            col = COLS[tr], lwd = 2.8, lty = lty_rank[rk])
-  mtext("Have we found all the park's bees yet?", side = 3, line = 3.0, font = 2, cex = 1.05, col = BEE_INK$primary)
-  mtext("Dashed = genera, solid = species. Curves still climbing on the least-sampled transects, so more surveys keep adding new bees.",
-        side = 3, line = 1.4, cex = 0.78, col = BEE_INK$secondary)   # takeaway + line-style key
+            col = COLS[tr], lwd = 3.2, lty = lty_rank[rk])
   present <- names(sac_by_rank[["species"]])                  # one transect legend (color = transect)
   legend("bottomright", title = "transect", legend = present,
-         col = COLS[present], lwd = 2.8, lty = 1, bty = "n", cex = 0.9,
+         col = COLS[present], lwd = 3.2, lty = 1, bty = "n", cex = 1.05,
          text.col = BEE_INK$secondary, title.col = BEE_INK$secondary)
   # rank key (house rule: species solid, genera dashed) -- neutral ink, since color = transect
   legend("bottomright", inset = c(0, 0.30), title = "rank", legend = c("species", "genera"),
-         col = BEE_INK$secondary, lwd = 2.8, lty = c(1, 2), bty = "n", cex = 0.9,
+         col = BEE_INK$secondary, lwd = 3.2, lty = c(1, 2), bty = "n", cex = 1.05,
          text.col = BEE_INK$secondary, title.col = BEE_INK$secondary)
-  bee_caption_base(scope = "all survey records, per transect (x = number of survey trips)",
-                   method = "lethal + non-lethal pooled", rank = "genera & species",
-                   sig = bee_test("sample-based species accumulation (specaccum) + Chao2 richness estimator"))
   par(op)
 }
 plot_accumulation_combined(file.path(OUT_REPORT, "bee_taxa_accumulation_by_transect.png"))
@@ -208,31 +203,25 @@ plot_accumulation_one_rank <- function(rank_label, key_col, lty, title_txt, sub_
   both <- unlist(lapply(c("genus_key", "species_key"), sacs_for), recursive = FALSE)
   xmax <- max(vapply(both, function(s) max(s$sites),    numeric(1)))   # shared limits: the two
   ymax <- max(vapply(both, function(s) max(s$richness), numeric(1)))   # split figures stay comparable
-  bee_png(file, width = 1900, height = 1250, res = 200); on.exit(dev.off())
+  bee_png(file, width = 2200, height = 1600, res = 200); on.exit(dev.off())
   bee_base_par()
-  op <- par(mar = c(4.2, 4.4, 5.0, 1), oma = c(4.6, 0, 0, 0))
-  plot(NA, xlim = c(0, xmax), ylim = c(0, ymax), xlab = "surveys",
-       ylab = sprintf("number of unique %s", rank_label))
+  op <- par(mar = c(4.6, 5.0, 1.5, 1.5), oma = c(0, 0, 0, 0))
+  plot(NA, xlim = c(0, xmax), ylim = c(0, ymax), xlab = "Surveys",
+       ylab = sprintf("Number of unique %s", rank_label),
+       cex.lab = 1.15, cex.axis = 1.05)
   for (tr in names(sacs))
-    lines(sacs[[tr]]$sites, sacs[[tr]]$richness, col = COLS[tr], lwd = 2.8, lty = lty)
-  mtext(title_txt, side = 3, line = 3.0, font = 2, cex = 1.05, col = BEE_INK$primary)
-  mtext(sub_txt, side = 3, line = 1.4, cex = 0.78, col = BEE_INK$secondary)
-  legend("bottomright", title = "transect", legend = names(sacs),
-         col = COLS[names(sacs)], lwd = 2.8, lty = lty, bty = "n", cex = 0.9,
+    lines(sacs[[tr]]$sites, sacs[[tr]]$richness, col = COLS[tr], lwd = 3.2, lty = lty)
+  legend("bottomright", title = "Transect", legend = names(sacs),
+         col = COLS[names(sacs)], lwd = 3.2, lty = lty, bty = "n", cex = 1.05,
          text.col = BEE_INK$secondary, title.col = BEE_INK$secondary)
-  bee_caption_base(scope = "all survey records, per transect (x = number of survey trips); axes match the combined and companion figures",
-                   method = "lethal + non-lethal pooled", rank = rank_label,
-                   sig = bee_test("sample-based species accumulation (specaccum) + Chao2 richness estimator"))
   par(op)
 }
 plot_accumulation_one_rank("species", "species_key", 1,
-  "Have we found all the park's bee species yet?",
-  "One curve per transect, methods pooled. Species curves are still climbing, so more surveys keep adding new species.",
-  file.path(OUT_REPORT, "bee_species_accumulation_by_transect.png"))
+                           NULL, NULL,
+                           file.path(OUT_REPORT, "bee_species_accumulation_by_transect.png"))
 plot_accumulation_one_rank("genera", "genus_key", 2,
-  "Have we found all the park's bee genera yet?",
-  "One curve per transect, methods pooled (dashed = genera, matching the combined figure). Genera level off sooner than species.",
-  file.path(OUT_REPORT, "bee_genera_accumulation_by_transect.png"))
+                           NULL, NULL,
+                           file.path(OUT_REPORT, "bee_genera_accumulation_by_transect.png"))
 
 # ---- 4b. JOURNAL method comparison: lethal vs non-lethal, SMALL MULTIPLES ----
 # ONE figure: a grid with rank as ROWS (genera top, species bottom) and transect as COLUMNS,

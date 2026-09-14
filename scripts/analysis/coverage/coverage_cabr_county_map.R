@@ -72,20 +72,8 @@ g <- ggplot() +
            size = 3, fontface = "italic", lineheight = 1.0, color = BEE_INK$muted) +
   coord_sf(xlim = c(bb["xmin"] - (bb["xmax"] - bb["xmin"]) * 0.52, bb["xmax"] + (bb["xmax"] - bb["xmin"]) * 0.30),
            ylim = c(bb["ymin"], bb["ymax"]), expand = TRUE) +
-  labs(title = "Cabrillo National Monument in San Diego County",
-       subtitle = sprintf("A speck of San Diego County by area (~%.3f%% of the land), yet home to %.0f%% of its native bee species and %.0f%% of its bee genera.\nRoughly %sx the native-bee diversity you would expect from its area.",
-                          area_pct, sp_pct, gen_pct, format(round(overrep, -2), big.mark = ",")),
-       caption = scope_cap(scope = "CABR footprint on San Diego County; area + native-bee-diversity share",
-                   method = "lethal + non-lethal pooled",
-                   rank = "species + genus",
-                   source = "official CABR checklist vs Holway SD County checklist (v3)",
-                   width = 78)) +
   theme_void(base_size = 12) +
-  theme(plot.title = element_text(face = "bold", size = 15, hjust = 0.5, colour = BEE_INK$primary, margin = margin(b = 2)),
-        plot.subtitle = element_text(hjust = 0.5, colour = BEE_INK$secondary, size = 10.5, margin = margin(b = 6)),
-        plot.caption = element_text(colour = BEE_INK$secondary, size = 9, hjust = 0, margin = margin(t = 8)),
-        plot.caption.position = "plot", plot.title.position = "plot",
-        plot.margin = margin(12, 12, 10, 12))
+  theme(plot.margin = margin(3, 3, 3, 3))
 # ---- inset: CABR's real footprint on the Point Loma peninsula ---------------
 plbb <- st_bbox(pl)
 g_inset <- ggplot() +
