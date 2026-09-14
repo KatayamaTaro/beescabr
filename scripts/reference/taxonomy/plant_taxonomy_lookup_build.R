@@ -254,7 +254,15 @@ plant_cache_changes <- function(before, after) {
     id_was <- chr(before, "taxon_id", i); id_now <- chr(after, "taxon_id", j)
     nm_was <- chr(before, "scientific_name", i); nm_now <- chr(after, "scientific_name", j)
     res_now <- tolower(chr(after, "resolved", j))
-    change <- if (identical(res_now, "false") || identical(res_now, "f")) "no longer resolves"
+    blank <- function(x) is.na(x) | !nzchar(x) | x == "NA"
+    had <- !blank(id_was); has <- !blank(id_now)
+    gone_now <- identical(res_now, "false") || identical(res_now, "f") || !has
+    # A change means something was true and now is not. A name that never resolved is
+    # not a change -- it was asked about for no reason, and offered a taxa/NA link
+    # that goes nowhere.
+    change <- if (!had && !has)                    NA_character_
+              else if (!had && has)                "now resolves"
+              else if (gone_now)                   "no longer resolves"
               else if (!identical(id_was, id_now)) "different taxon"
               else if (!identical(nm_was, nm_now)) "renamed"
               else NA_character_
@@ -287,6 +295,8 @@ plant_cache_changes <- function(before, after) {
 #' @return The subset that moves or loses a taxon_id.
 plant_changes_to_ask <- function(changed) {
   if (!nrow(changed)) return(changed)
+  # "now resolves" needs no ruling: it had no number before, so taking the new one
+  # cannot overwrite anybody's judgement.
   changed[changed$change %in% c("different taxon", "no longer resolves"), , drop = FALSE]
 }
 
@@ -328,9 +338,13 @@ plant_apply_keep <- function(after, before, kept_names) {
 #' @param verbose Print each name as it is resolved.
 #' @param force Ask iNaturalist again about names already in the cache. The cache has
 #'   no age of its own, so this is the only way a revised plant is ever noticed.
+#' @param save_every Write the cache to disk after this many new look-ups. A full
+#'   refresh runs for about an hour against a rate-limited API; without this, an
+#'   interrupt threw away every name already resolved.
 #' @return A list of `rows` (one per requested name) and the updated `cache`.
 plt_resolve_names <- function(names_vec, cache = NULL, resolve_fn = plt_resolve_one,
-                              cache_path = PLT_CACHE, verbose = TRUE, force = FALSE) {
+                              cache_path = PLT_CACHE, verbose = TRUE, force = FALSE,
+                              save_every = 25L) {
   cache <- cache %||% plt_load_cache(cache_path)
   # Keep everything character: a disk-loaded cache is all-character, a fresh
   # resolution has a logical `resolved`; without this bind_rows() refuses to
@@ -338,7 +352,14 @@ plt_resolve_names <- function(names_vec, cache = NULL, resolve_fn = plt_resolve_
   if (nrow(cache)) cache <- mutate(cache, across(everything(), as.character))
   have  <- if (nrow(cache)) plt_norm(cache$input_name) else character(0)
   out <- list()
-  for (nm in names_vec) {
+  done <- 0L
+  save_now <- function() {
+    if (is.null(cache_path) || !nzchar(cache_path)) return(invisible())
+    dir.create(dirname(cache_path), recursive = TRUE, showWarnings = FALSE)
+    utils::write.csv(cache, cache_path, row.names = FALSE, na = "")
+  }
+  for (i in seq_along(names_vec)) {
+    nm <- names_vec[i]
     # force: ask iNaturalist again about a name we already hold. The cache has no age,
     # so without this a name resolved once keeps its first taxon_id forever -- and
     # plants are resolved BY NAME, so a retired taxon quietly re-points the name at a
@@ -346,7 +367,11 @@ plt_resolve_names <- function(names_vec, cache = NULL, resolve_fn = plt_resolve_
     hit <- if (!isTRUE(force) && length(have)) which(have == plt_norm(nm)) else integer(0)
     if (length(hit)) out[[nm]] <- cache[hit[1], intersect(.plt_cache_cols, names(cache)), drop = FALSE]
     else {
-      if (verbose) message("  resolving plant name: ", nm)
+      done <- done + 1L
+      # iNaturalist rate-limits, so a full refresh of ~900 names runs for an hour with
+      # backoff waits between requests. Without a count you cannot tell name 5 from
+      # name 500, and without the periodic save below an interrupt threw all of it away.
+      if (verbose) message(sprintf("  resolving %d/%d: %s", i, length(names_vec), nm))
       r <- resolve_fn(nm); r$input_name <- nm; r$resolved_on <- as.character(Sys.Date())
       r <- mutate(r, across(everything(), as.character))
       out[[nm]] <- r[, intersect(.plt_cache_cols, names(r)), drop = FALSE]
@@ -357,8 +382,11 @@ plt_resolve_names <- function(names_vec, cache = NULL, resolve_fn = plt_resolve_
         cache <- cache[plt_norm(cache$input_name) != plt_norm(nm), , drop = FALSE]
       cache <- bind_rows(cache, out[[nm]])
       have  <- if ("input_name" %in% names(cache)) plt_norm(cache$input_name) else character(0)
+      # save periodically: an hour of look-ups must survive a Ctrl-C
+      if (done %% save_every == 0L) save_now()
     }
   }
+  if (done %% save_every != 0L) save_now()
   list(rows = if (length(out)) bind_rows(out) else tibble(), cache = cache)
 }
 

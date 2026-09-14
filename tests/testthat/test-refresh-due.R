@@ -217,3 +217,43 @@ test_that("every cache the pipeline depends on is listed, with a tool that exist
                 info = paste(c$key, "->", c$tool))       # a tool you can actually run
   }
 })
+
+# The yearly refresh auto-runs two tools and promises "It does NOT ask you to judge
+# any bee names". The plant taxon cache was added to REFRESH_CACHES -- so a run
+# reports it stale -- but nothing refreshes it, and folding it into that same yes
+# would break the promise: it runs for about an hour and ends in questions.
+#
+# So it is asked for separately, the way the ingest menu asks: say what it costs
+# before the person commits, not after.
+test_that("the slow refresh is separated from the quick ones", {
+  overdue <- list(list(key = "IUCN Red List status"), list(key = "plant common names"),
+                  list(key = "plant taxon numbers"))
+  s <- refresh_split(overdue)
+  expect_equal(vapply(s$quick, function(x) x$key, ""),
+               c("IUCN Red List status", "plant common names"))
+  expect_equal(vapply(s$slow, function(x) x$key, ""), "plant taxon numbers")
+})
+
+test_that("the slow prompt says how long and that it asks questions", {
+  txt <- paste(refresh_slow_lines(), collapse = " ")
+  expect_match(txt, "hour", ignore.case = TRUE)
+  expect_match(txt, "question", ignore.case = TRUE)
+  expect_match(txt, "saved as it goes|stop it", ignore.case = TRUE)
+})
+
+test_that("it says what declining costs, which is nothing urgent", {
+  txt <- paste(refresh_slow_lines(), collapse = " ")
+  expect_match(txt, "Latin", ignore.case = TRUE)
+})
+
+test_that("a scheduled run never starts an hour-long job unasked", {
+  expect_false(refresh_confirm_slow(is_interactive = FALSE, read_fn = function(...) "y",
+                                    say = function(...) NULL))
+})
+
+test_that("yes means yes, anything else means no", {
+  yn <- function(a) refresh_confirm_slow(is_interactive = TRUE,   # testthat is not
+                                         read_fn = function(...) a, say = function(...) NULL)
+  expect_true(yn("y")); expect_true(yn("yes")); expect_true(yn(" Y "))
+  expect_false(yn("")); expect_false(yn("n")); expect_false(yn("later"))
+})

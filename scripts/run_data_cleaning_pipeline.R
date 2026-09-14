@@ -193,6 +193,17 @@ main <- function() {
              error = function(e) bx_note("plant-name refresh failed (", conditionMessage(e), ") — kept the existing cache."))
   }
 
+  # The plant taxon cache is asked for on its own. It is an hour rather than minutes,
+  # and it ends in questions -- which the yes above explicitly promises it will not do.
+  # Same shape as the ingest menu: say what it costs before anyone commits.
+  if (!.offline && length(refresh_split(.overdue)$slow) &&
+      refresh_confirm_slow(is_interactive = interactive() &&
+                             Sys.getenv("BEESCABR_NONINTERACTIVE", "0") != "1")) {
+    tryCatch(source("scripts/reference/refresh/refresh_plant_taxon_ids.R"),
+             error = function(e) bx_note("plant-number refresh failed (", conditionMessage(e),
+                                         ") — kept the existing numbers."))
+  }
+
   bx_phase(1, "SETUP & FETCH")
 
   # ---- 1. INGEST (once) ----

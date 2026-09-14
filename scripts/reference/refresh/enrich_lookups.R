@@ -104,14 +104,34 @@ IUCN_SYNONYM    <- c("Bombus sonorus"      = "Bombus pensylvanicus",
 # quietly erasing Bombus crotchii (Endangered) from the public pages. A failure now returns
 # ok = FALSE with code = NA, and the caller keeps whatever the cache already held.
 # fetch_fn is injectable so the failure paths are testable without touching the network.
-.iucn_fetch_one <- function(binom, key, fetch_fn = NULL) {
+# rredlist 1.1.1 cannot report "this species has no assessments". rl_species_latest()
+# warns "Returning the latest assessment across all scopes" and then throws
+# "incorrect number of dimensions" sorting a result that is empty. Most native bees
+# have never been assessed, so this fires constantly: the first live run called it 74
+# failures out of 79 and advised trying again later, which would never have helped.
+#
+# rl_species() handles the same species fine and reports zero assessments, so it is
+# used to tell the two apart. Zero assessments is Not Evaluated -- a real answer.
+.IUCN_EMPTY_ERR <- "incorrect number of dimensions"
+
+.iucn_fetch_one <- function(binom, key, fetch_fn = NULL, probe_fn = NULL) {
   q  <- if (binom %in% names(IUCN_SYNONYM)) unname(IUCN_SYNONYM[binom]) else binom
   fn <- if (is.null(fetch_fn))
     function(...) rredlist::rl_species_latest(genus = word(q, 1), species = word(q, 2),
                                               key = key, parse = TRUE)
   else fetch_fn
+  probe <- if (is.null(probe_fn))
+    function(...) rredlist::rl_species(genus = word(q, 1), species = word(q, 2),
+                                       key = key, parse = FALSE)
+  else probe_fn
   err <- NA_character_
   res <- tryCatch(fn(), error = function(e) { err <<- conditionMessage(e); NULL })
+  if (is.null(res) && !is.na(err) && grepl(.IUCN_EMPTY_ERR, err, fixed = TRUE)) {
+    # crash-on-empty, or a genuine parse problem? Only the count settles it.
+    n <- tryCatch(length(probe()$assessments), error = function(e) NA_integer_)
+    if (!is.na(n) && n == 0L)
+      return(list(ok = TRUE, error = NA_character_, code = "NE", year = "", note = ""))
+  }
   if (is.null(res))
     return(list(code = NA_character_, year = NA_character_, note = "", ok = FALSE, error = err))
   code <- tryCatch(res$red_list_category$code, error = function(e) NULL)

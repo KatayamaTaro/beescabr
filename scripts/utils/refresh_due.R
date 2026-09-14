@@ -119,6 +119,57 @@ refresh_age_lines <- function(ages) {
   }, character(1))
 }
 
+# Which caches the yearly prompt can fold into one yes, and which cannot.
+#
+# The quick two re-query an API and finish. The plant taxon cache is different in kind:
+# ~900 names against a rate-limited endpoint is about an hour, and it ends by asking
+# which plant a moved name now means. Folding it into the same yes would break that
+# prompt's own promise -- "It does NOT ask you to judge any bee names" -- and turn a
+# routine confirmation into an unexpected evening.
+REFRESH_SLOW_KEYS <- "plant taxon numbers"
+
+#' Split the overdue caches into ones that can share a yes and ones that cannot
+#'
+#' @param overdue What `refresh_overdue()` returned.
+#' @return A list of `quick` and `slow`.
+refresh_split <- function(overdue) {
+  is_slow <- vapply(overdue, function(x) (x$key %||% "") %in% REFRESH_SLOW_KEYS, logical(1))
+  list(quick = overdue[!is_slow], slow = overdue[is_slow])
+}
+
+#' What the slow refresh costs, said before anybody commits to it
+#'
+#' Same shape as the ingest menu: the price is on screen first.
+#'
+#' @return Lines to print.
+refresh_slow_lines <- function() c(
+  "",
+  "  The plant name lookup has never been re-checked against iNaturalist.",
+  "",
+  "  Doing it now takes about an hour: there are ~900 plant names and iNaturalist",
+  "  limits how fast they can be asked for, so there are long pauses between them.",
+  "  Answers are saved as it goes, so you can stop it and keep what it has done.",
+  "",
+  "  At the end it asks a question for each plant whose number changed -- usually a",
+  "  handful, sometimes none. That is the part the other refreshes never do.",
+  "",
+  "  Saying no costs nothing today: plant names keep the numbers they already have,",
+  "  and any plant iNaturalist cannot name shows its Latin name only.")
+
+#' Ask whether to run the slow refresh
+#'
+#' @param is_interactive FALSE on a scheduled run, which must never start an hour-long
+#'   job nobody is watching.
+#' @param read_fn Injection point for the answer.
+#' @param say Injection point for printing.
+#' @return TRUE to run it.
+refresh_confirm_slow <- function(is_interactive = interactive(), read_fn = readline,
+                                 say = message) {
+  if (!is_interactive) return(FALSE)
+  for (ln in refresh_slow_lines()) say(ln)
+  isTRUE(tolower(trimws(read_fn("  Re-check the plant names now? [y/N]: "))) %in% c("y", "yes"))
+}
+
 # Ask before spending a few minutes online re-checking a year-old cache. Defaults to
 # NO: declining keeps the existing cache and the run carries on normally, still picking
 # up NEW taxa incrementally the way every run does. Nothing is lost by saying no except

@@ -197,8 +197,11 @@ css <- beescabr_fill_colors('
     padding:.3rem .7rem;background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.22);border-radius:999px}
   .head h1{margin:0 0 .5rem;font-size:2.2rem;line-height:1.14;letter-spacing:-.02em;font-weight:800;color:#fff}
   .head p{color:rgba(255,255,255,.9);margin:0;max-width:58ch;font-size:1.05rem}
-  main{max-width:820px;margin:0 auto;padding:2rem 1.5rem 3.5rem}
+  main{max-width:820px;margin:0 auto;padding:2rem 1.5rem 2rem}
   section{margin:0 0 2.4rem}
+  /* the last section stacked its 2.4rem margin on top of the bottom padding here
+     and the padding-top on footer, leaving a hand-sized gap above the rule */
+  section:last-of-type{margin-bottom:0}
   h2{font-size:1.05rem;letter-spacing:.02em;color:var(--accent-deep);margin:0 0 .3rem}
   .sec-note{color:var(--muted);font-size:.9rem;margin:0 0 1rem}
   .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:.6rem}

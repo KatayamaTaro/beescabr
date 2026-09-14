@@ -129,3 +129,67 @@ test_that("keeping restores the row we had, taking leaves the new one", {
   expect_equal(nrow(kept), 1L)                    # replaced, not appended
   expect_equal(plant_apply_keep(after, before, character(0))$taxon_id, "901122")
 })
+
+# 930 names against a rate-limited API takes an hour, not the "few minutes" the tool
+# claimed, and the cache was only written after the whole loop -- so interrupting it
+# threw away every name already resolved. A long job has to save as it goes and say
+# where it has got to.
+test_that("the cache is written as it goes, not only at the end", {
+  cache_path <- tempfile(fileext = ".csv")
+  seen <- 0L
+  plt_resolve_names(paste("Plant", 1:7), cache = NULL, cache_path = cache_path,
+                    force = TRUE, verbose = FALSE, save_every = 3L,
+                    resolve_fn = function(nm) {
+                      seen <<- seen + 1L
+                      if (seen == 5L) stop("interrupted")      # die part way
+                      data.frame(taxon_id = "1", scientific_name = nm, common_name = "",
+                                 rank = "species", resolved = "TRUE", stringsAsFactors = FALSE)
+                    }) |> try(silent = TRUE)
+  expect_true(file.exists(cache_path))
+  saved <- read.csv(cache_path, stringsAsFactors = FALSE)
+  expect_gte(nrow(saved), 3L)            # the first batch survived the interrupt
+})
+
+test_that("progress says which name it is on, out of how many", {
+  said <- character(0)
+  withCallingHandlers(
+    plt_resolve_names(paste("Plant", 1:4), cache = NULL, cache_path = tempfile(fileext = ".csv"),
+                      force = TRUE, verbose = TRUE, save_every = 100L,
+                      resolve_fn = function(nm)
+                        data.frame(taxon_id = "1", scientific_name = nm, common_name = "",
+                                   rank = "species", resolved = "TRUE", stringsAsFactors = FALSE)),
+    message = function(m) { said <<- c(said, conditionMessage(m)); invokeRestart("muffleMessage") })
+  txt <- paste(said, collapse = " ")
+  expect_match(txt, "/4", fixed = TRUE)
+})
+
+# The live run opened with:
+#     [1/13] Apis mellifera
+#        was  NA (NA)      https://www.inaturalist.org/taxa/NA
+#        now  iNaturalist returns nothing for this name.
+# Nothing changed. That name never resolved -- it was NA before and is NA now -- so it
+# was asked about for no reason, and offered a link to taxa/NA that goes nowhere. A
+# change means something was true and now is not; unresolved-then-unresolved is just
+# a name iNaturalist has never had.
+test_that("a name that never resolved is not reported as having stopped", {
+  was_na <- row("Apis mellifera", NA, NA, resolved = FALSE)
+  expect_equal(nrow(plant_cache_changes(was_na, was_na)), 0L)
+})
+
+test_that("a name that DID resolve and now does not is still reported", {
+  ch <- plant_cache_changes(row("Madia sp.", 1L, "Madia"),
+                            row("Madia sp.", NA, NA, resolved = FALSE))
+  expect_equal(ch$change, "no longer resolves")
+})
+
+test_that("a name that never had an id is not reported as a different taxon either", {
+  ch <- plant_cache_changes(row("Apis mellifera", NA, NA, resolved = FALSE),
+                            row("Apis mellifera", NA, NA, resolved = FALSE))
+  expect_equal(nrow(ch), 0L)
+})
+
+test_that("a name with no id that suddenly gets one IS worth reporting", {
+  ch <- plant_cache_changes(row("Apis mellifera", NA, NA, resolved = FALSE),
+                            row("Apis mellifera", 47219L, "Apis mellifera"))
+  expect_equal(ch$change, "now resolves")
+})

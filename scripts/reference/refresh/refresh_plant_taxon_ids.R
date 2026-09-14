@@ -42,11 +42,14 @@ if (!nrow(before)) {
   message("  Asking iNaturalist about all ", length(names_vec), " plant names again.")
   message("  These were each looked up once and the answer kept ever since, so this is")
   message("  the only thing that notices a plant iNaturalist has since revised.")
-  message("  A few minutes. Nothing is decided here -- anything that moved is printed")
+  message("  iNaturalist rate-limits this, so expect about an hour and long pauses")
+  message("  between names -- that is the wait, not a hang. Progress is printed as it")
+  message("  goes, and answers are saved along the way, so stopping it loses only the")
+  message("  name in flight. Nothing is decided here -- anything that moved is printed")
   message("  for you to judge.")
   message("")
 
-  res <- plt_resolve_names(names_vec, cache = before, force = TRUE, verbose = FALSE)
+  res <- plt_resolve_names(names_vec, cache = before, force = TRUE, verbose = TRUE)
   after <- res$cache
   changed <- plant_cache_changes(before, after)
 

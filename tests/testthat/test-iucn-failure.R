@@ -125,3 +125,46 @@ test_that("plant common names say what is missing and what it costs", {
   expect_false(grepl("local seed", txt, fixed = TRUE))
   expect_match(txt, "Latin", ignore.case = TRUE)     # what the reader will see instead
 })
+
+# The first live run reported "5 of 79 bees came back; 74 did not", four times over,
+# and advised trying again later. Retrying would never have helped: rl_species_latest()
+# in rredlist 1.1.1 throws "incorrect number of dimensions" when a species has NO
+# assessments at all -- it warns "Returning the latest assessment across all scopes",
+# then crashes sorting a result that is empty. rl_species() handles the same species
+# fine and reports zero assessments.
+#
+# A bee the IUCN has never assessed is Not Evaluated. That is a real answer, not a
+# failure, and it is true of most native bees. Counting it as a failure made a normal
+# run look broken and buried any genuine outage among 74 false ones.
+test_that("a species with no assessments is Not Evaluated, not a failure", {
+  r <- .iucn_fetch_one("Andrena vandykei", key = "k",
+                       fetch_fn = function(...) stop("incorrect number of dimensions"),
+                       probe_fn = function(...) list(assessments = list()))
+  expect_true(r$ok)
+  expect_equal(r$code, "NE")
+  expect_true(is.na(r$error))
+})
+
+test_that("the same crash WITH assessments present is still a failure", {
+  r <- .iucn_fetch_one("Bombus crotchii", key = "k",
+                       fetch_fn = function(...) stop("incorrect number of dimensions"),
+                       probe_fn = function(...) list(assessments = list(list(year_published = "2015"))))
+  expect_false(r$ok)
+  expect_true(is.na(r$code))
+})
+
+test_that("a probe that itself fails leaves the original failure standing", {
+  r <- .iucn_fetch_one("Andrena vandykei", key = "k",
+                       fetch_fn = function(...) stop("incorrect number of dimensions"),
+                       probe_fn = function(...) stop("no internet"))
+  expect_false(r$ok)
+  expect_match(r$error, "incorrect number of dimensions", fixed = TRUE)
+})
+
+test_that("an ordinary failure is not probed away", {
+  r <- .iucn_fetch_one("Bombus crotchii", key = "bad",
+                       fetch_fn = function(...) stop("Token not valid! (HTTP 401)"),
+                       probe_fn = function(...) stop("should not be called"))
+  expect_false(r$ok)
+  expect_match(r$error, "401", fixed = TRUE)
+})
