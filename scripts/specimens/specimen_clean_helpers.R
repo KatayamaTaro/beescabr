@@ -225,7 +225,10 @@ REVIEW_STOP_WORDS     <- c("y", "yes", "stop", "fix", "halt", "x")              
 REVIEW_CONTINUE_WORDS <- c("", "n", "no", "skip", "continue", "c", "go", "ok")   # keep going ("" = Enter default)
 .review_ask <- function(prompt_fn, lead) {
   repeat {
-    ans <- tolower(trimws(prompt_fn(paste0(lead, "  Pause to review now?  [y/N]: "))))
+    # the lead is printed above now, wrapped; gluing it into the prompt is what made
+    # the line run off the screen in the first place
+    if (nzchar(lead)) message(lead)
+    ans <- tolower(trimws(prompt_fn("     Pause to review now?  [y/N]: ")))
     if (ans %in% REVIEW_STOP_WORDS)     return("stop")       # check stop first
     if (ans %in% REVIEW_CONTINUE_WORDS) return("continue")   # "" (Enter) lands here -> default continue
     message("     (y = pause & review · Enter = continue)")
@@ -307,6 +310,29 @@ resolve_flag_gate <- function(n_flags, interactive_ok, prompt_fn = readline) {
          "(next number, today's date); never edit an old one.")
 }
 
+#' Wrap a review instruction so it fits a terminal
+#'
+#' The gate printed its explanation and its fix instruction as single unwrapped lines,
+#' so both ran off the right edge and the operator could not read the end of either.
+#' Continuations are indented past the first line, so a wrapped sentence still reads as
+#' one block rather than as new bullets.
+#'
+#' @param text The sentence to wrap.
+#' @param first Indent for the first line.
+#' @param rest Indent for the continuations.
+#' @param width Column to wrap at.
+#' @return Character vector of lines.
+.review_wrap <- function(text, first = "     ", rest = "       ", width = 84)
+  strwrap(text, width = width, initial = first, prefix = rest)
+
+#' The "where to fix it" instruction, wrapped
+#'
+#' @param fix_hint The workbook sentence from `.specimen_fix_hint()`.
+#' @return Character vector of lines.
+.review_fix_lines <- function(fix_hint)
+  .review_wrap(paste("Review these in", sub("[.]+$", ".", fix_hint)),
+               first = "     ", rest = "       ")
+
 #' One review checkpoint, so nothing in a review folder is silently missed
 #'
 #' Prints each outstanding issue with a path you can open and, where given, a
@@ -345,17 +371,22 @@ resolve_review_gate <- function(items, review_dir, interactive_ok, prompt_fn = r
   if ("what" %in% names(items)) {
     for (w in unique(items$what[!is.na(items$what) & nzchar(items$what)])) {
       message("")
-      for (ln in strsplit(w, "\n", fixed = TRUE)[[1]]) message("     ", ln)
+      for (para in strsplit(w, "\n", fixed = TRUE)[[1]])
+        for (ln in .review_wrap(para)) message(ln)
     }
   }
   if (!interactive_ok) { message("     (batch mode: logged above, continuing)"); return("continue") }
   if (!blocking) {   # heads-up only -- the run never stops here; the fix happens elsewhere, later
-    prompt_fn(sprintf("  Review these in %s when you can (each row has its url).  [Enter] to continue: ", fix_hint))
+    for (ln in .review_fix_lines(fix_hint)) message(ln)
+    message("     Each row carries its url.")
+    prompt_fn("     [Enter] to continue: ")
     return("continue")
   }
   # "Review", not "fix": some flags are genuine mistakes to correct, others are just new taxa
   # (a real name not in the lookup yet) that need no raw-data change -- they get added on rebuild.
-  .review_ask(prompt_fn, sprintf("  Review these in %s.", fix_hint))
+  message("")
+  for (ln in .review_fix_lines(fix_hint)) message(ln)
+  .review_ask(prompt_fn, "")
 }
 
 # QC flags: which required-data fields are missing. genus is the one rank expected

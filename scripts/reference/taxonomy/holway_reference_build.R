@@ -209,6 +209,20 @@ itis_disposition <- function(term, prompt_fn = readline, interactive_ok = TRUE) 
 #' @return The prompt string.
 .hrb_itis_ask <- function() "  Is it valid in ITIS?  [yes / no]: "
 
+#' What recording "no iNaturalist page" actually does
+#'
+#' It used to print "won't prompt again until it's cleared", which contradicted the
+#' banner three lines above it and used a word ("cleared") defined nowhere. Since the
+#' second pass was changed to ask every run -- iNaturalist does publish bees, and a
+#' permanent answer would never notice -- the banner is right and this was stale.
+#' Recording it still does something: it marks the name as a real bee rather than a
+#' bad one, so ITIS is not asked about it, and your answer is shown next time.
+#'
+#' @return One line.
+.hrb_no_page_note <- function()
+  paste("  Recorded: a real bee with no iNaturalist page. You are asked again next",
+        "run, in case one gets added.")
+
 #' What a skip means for this bee
 #' @param why Why nothing was recorded.
 #' @return One line.
@@ -715,10 +729,12 @@ resolve_missing_genera <- function(unresolved_genera, known_gkeys, con,
   .row("", "  number in inaturalist.org/taxa/345235-Colletes-hyalinus")
   .row("a name", "scientific name, genus, subgenus, complex, species")
   .row("", "  or subspecies -> searches iNaturalist for that instead")
-  .row("none", "iNaturalist has no page for this bee -> recorded. You")
-  .row("", "  are asked again next run, in case one gets added.")
-  .row("skip", "not sure -> nothing recorded, asked again next run.")
-  .row("", "  Pressing Enter does the same.")
+  .row("none", "iNaturalist has no page for this bee. Recorded as a real")
+  .row("", "  bee without one, so ITIS is not asked about it.")
+  .row("skip", "not sure -> nothing recorded. Pressing Enter does the same.")
+  message("")
+  message("  Neither none nor skip stops the question: both come back next run, in case")
+  message("  iNaturalist adds a page for the bee.")
   message("")
   message("  NOT SURE? PRESS ENTER. A wrong taxon_id is worse than none -- it silently")
   message("  attaches this bee's records to a different bee. Skipping costs nothing.")
@@ -785,7 +801,7 @@ resolve_missing_genera <- function(unresolved_genera, known_gkeys, con,
   if (raw == "" || tolower(raw) %in% c("skip", "s")) return(NULL)
   if (tolower(raw) %in% c("n", "no", "noid", "none")) {
     decision_put(con, key, "no_inat_id")
-    message("  marked 'no iNat id yet' -- won't prompt again until it's cleared.")
+    message(.hrb_no_page_note())
     return("no_inat_id")
   }
 

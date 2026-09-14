@@ -225,9 +225,13 @@ merge_manual_overrides <- function(new, existing = NULL) {
   message("    345235 New name    the id AND a corrected name")
   message("    none               there is no iNaturalist page for this bee")
   message("    skip               not sure. Pressing Enter does the same.")
-  message("                         Either way nothing is recorded and you are asked")
-  message("                         again next run, in case a page gets added.")
   message("    quit               stop here, keeping everything entered so far")
+  message("")
+  # none and skip both fall through to `next` -- nothing is written for either. This
+  # sat indented under `skip`, which read as though only skip came back, leaving
+  # "none" looking like a permanent answer. It is not attached to either option now.
+  message("  Neither none nor skip records anything, so you are asked again next run,")
+  message("  in case iNaturalist adds a page for the bee.")
   invisible(NULL)
 }
 

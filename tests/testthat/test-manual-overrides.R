@@ -225,3 +225,27 @@ test_that("merging into nothing works", {
                 correct_name = NA_character_, note = "n")
   expect_equal(nrow(merge_manual_overrides(new, NULL)), 1L)
 })
+
+# "none" and "skip" do the same thing here -- line 259 sends both to `next`, so
+# nothing is recorded either way. The banner said so, but the sentence was indented
+# under `skip`, which reads as though it applied only to `skip` and left "none" looking
+# permanent. Brandi read it that way mid-run and asked. Put the shared consequence
+# where it cannot attach to one option.
+test_that("none and skip are shown as having the same consequence", {
+  src("reference/manual_overrides.R")
+  said <- character(0)
+  withCallingHandlers(.mo_banner(17L), message = function(m) {
+    said <<- c(said, conditionMessage(m)); invokeRestart("muffleMessage") })
+  lines <- unlist(strsplit(paste(said, collapse = ""), "\n", fixed = TRUE))
+
+  i_none <- grep("^    none ", lines)
+  i_skip <- grep("^    skip ", lines)
+  expect_length(i_none, 1L); expect_length(i_skip, 1L)
+
+  # the "asked again" sentence must not sit indented under skip alone
+  i_again <- grep("asked again next run", lines)
+  expect_true(length(i_again) == 1L)
+  expect_false(grepl("^ {10,}", lines[i_again]),
+               info = "the shared consequence is indented under one option")
+  expect_match(lines[i_again], "[Nn]either|[Bb]oth|Either", info = "says it covers both")
+})

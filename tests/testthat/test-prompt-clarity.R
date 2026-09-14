@@ -345,9 +345,9 @@ test_that("a first-time question says nothing about a previous answer", {
 })
 
 test_that("the none option no longer promises it will stop asking", {
-  txt <- .said(.second_pass_banner(1L))
+  txt <- gsub("[[:space:]]+", " ", .said(.second_pass_banner(1L)))
   expect_false(grepl("not be asked again", txt, fixed = TRUE))
-  expect_match(txt, "asked again", fixed = TRUE)     # it says the opposite now
+  expect_match(txt, "both come back next run", fixed = TRUE)   # it says the opposite
 })
 
 test_that("the table offers the words, not the keystrokes", {
@@ -520,4 +520,57 @@ test_that("a skip says whether the bee comes back", {
 test_that("the finished-table line says where the file is", {
   expect_match(.hrb_wrote(1035L, "data/reference/holway_sd_bee_reference_table_v3_generated.csv"),
                "data/reference/holway_sd_bee_reference_table_v3_generated.csv", fixed = TRUE)
+})
+
+# The banner promises "asked again next run, in case one gets added", and then typing
+# `none` printed "won't prompt again until it's cleared." Flat contradiction, in the
+# same screen. The banner is right: .second_pass_asks() never consults the decision,
+# so the question comes back regardless. The confirmation line was left over from when
+# a `none` answer did suppress it, and "cleared" was never defined anywhere.
+test_that("confirming 'none' does not contradict the banner", {
+  txt <- .hrb_no_page_note()
+  expect_false(grepl("won't prompt again", txt, fixed = TRUE))
+  expect_false(grepl("cleared", txt, fixed = TRUE))
+  expect_match(txt, "asked again", fixed = TRUE)
+})
+
+test_that("it says what recording the answer is actually for", {
+  txt <- .hrb_no_page_note()
+  expect_match(txt, "real bee", ignore.case = TRUE)
+})
+
+test_that("the banner says plainly that neither none nor skip stops the question", {
+  txt <- gsub("[[:space:]]+", " ", .said(.second_pass_banner(6L)))
+  expect_match(txt, "Neither none nor skip stops the question", fixed = TRUE)
+})
+
+# The review gate printed its explanation and its fix instruction as single
+# unwrapped lines, so both ran off the right edge of the terminal and the operator
+# could not read the end of either. It also ended "never edit an old one.." -- the
+# hint already ends in a full stop and the caller added another.
+test_that("nothing the review gate prints runs off the screen", {
+  it <- data.frame(label = "duplicate IDs", count = 2L,
+                   file = "qc_review_specimen_duplicates_generated.csv",
+                   what = paste("Two rows carry the same museum number, so one specimen's records",
+                                "would be credited to the other. Give one of them its own number,",
+                                "or delete the row if it is a duplicate entry rather than a",
+                                "duplicate specimen."),
+                   stringsAsFactors = FALSE)
+  said <- character(0)
+  withCallingHandlers(
+    resolve_review_gate(it, "data/specimens/specimens_clean/review", interactive_ok = FALSE,
+                        fix_hint = .specimen_fix_hint("cabr_bee_specimens_record_V19_2026_09_02.xlsx")),
+    message = function(m) { said <<- c(said, conditionMessage(m)); invokeRestart("muffleMessage") })
+  lines <- unlist(strsplit(paste(said, collapse = ""), "\n", fixed = TRUE))
+  # a path or url is one unbroken token: wrapping it would break copy-paste, so it is
+  # allowed to run long. Everything with a space in it has to fit.
+  wrappable <- lines[grepl(" ", trimws(lines))]
+  expect_equal(wrappable[nchar(wrappable) > 88], character(0))
+})
+
+test_that("the fix instruction wraps too, and does not double its full stop", {
+  lines <- .review_fix_lines(.specimen_fix_hint("cabr_bee_specimens_record_V19_2026_09_02.xlsx"))
+  expect_equal(lines[nchar(lines) > 88], character(0))
+  expect_false(any(grepl("..", lines, fixed = TRUE)))
+  expect_match(paste(lines, collapse = " "), "V19_2026_09_02.xlsx", fixed = TRUE)
 })
