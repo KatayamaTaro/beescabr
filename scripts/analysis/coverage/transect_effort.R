@@ -31,6 +31,26 @@ COV_EFFORT    <- file.path(DIR_REPORT,  "coverage/transect_effort")     # sampli
 SPECIES_RANKS <- c("species", "subspecies")
 GENUS_RANKS   <- c("species", "subspecies", "subgenus", "complex", "genus")
 TRANSECTS     <- c("BST", "UPMON", "TP", "OT")   # named transects; OT = off-transect
+
+#' What this figure's scope actually is
+#'
+#' It said "all records". It is not: `filter(transect %in% TRANSECTS)` drops every
+#' record with no transect on it -- 4,106 of 12,471, almost all of them public
+#' observations rather than project surveys. Dropping them is right (a visitor's
+#' photograph is not sampling effort, however close to a route they stood), but a
+#' caption claiming a scope the figure does not have is how the figure's 8,365 and
+#' Table 2's 12,471 could only be reconciled by email.
+#'
+#' @param kept Records the figure shows.
+#' @param total Records in the cleaned tables.
+#' @return The scope string for `scope_cap()`.
+.te_scope <- function(kept, total) {
+  left <- total - kept
+  paste0("records with a transect recorded, by transect (OT = off-transect)",
+         if (left > 0) paste0("; the park's other ", format(left, big.mark = ","),
+                              " bee records are public observations, not surveys, ",
+                              "and carry no transect") else "")
+}
 dir.create(OUT_JOURNAL, recursive = TRUE, showWarnings = FALSE)
 dir.create(COV_EFFORT,  recursive = TRUE, showWarnings = FALSE)
 is_true <- function(x) toupper(str_squish(as.character(x))) == "TRUE"
@@ -104,8 +124,15 @@ effort_chart <- function(tbl, file, scope_lab) {
                        plot.title = element_text(hjust = 0.5))
   bee_ggsave(file, g, width = 6.4, height = 5, bg = "white")
 }
-effort_chart(tr_tbl, file.path(COV_EFFORT, "survey_effort_by_transect.png"),
-             scope_cap("all records, by transect (OT = off-transect)", "lethal vs non-lethal", "records"))
+# RETIRED 2026-09-13: the two REPORT charts are replaced by
+# analysis/coverage/records_near_transect.R, which shows every record placed on a
+# transect -- the tagged ones plus the untagged ones within 10 m -- instead of only
+# the tagged 8,365. Kept commented rather than deleted: the JOURNAL versions below
+# still use effort_chart()/effort_total_chart(), and the fair-window scope they draw
+# is genuinely survey-only, so those two stay.
+# effort_chart(tr_tbl, file.path(COV_EFFORT, "survey_effort_by_transect.png"),
+#              scope_cap(.te_scope(nrow(recs2), nrow(spec) + nrow(inat)),
+#                        "lethal vs non-lethal", "records", n = nrow(recs2)))
 effort_chart(tr_tbl_fair, file.path(OUT_JOURNAL, "transect_effort_journal.png"),
              scope_cap(scope  = "fair window: survey-only, Mar-Oct 2021-2023 (OT excluded -- added 2024)",
                        method = "lethal vs non-lethal",
@@ -128,11 +155,15 @@ effort_total_chart <- function(tbl, file, scope_lab) {
                        plot.title = element_text(hjust = 0.5))
   bee_ggsave(file, g, width = 6.4, height = 5, bg = "white")
 }
-effort_total_chart(tr_tbl, file.path(COV_EFFORT, "survey_effort_by_transect_total.png"),
-                   scope_cap("all records, by transect (OT = off-transect)", "lethal + non-lethal pooled", "records"))
+# RETIRED 2026-09-13 -- see the note above.
+# effort_total_chart(tr_tbl, file.path(COV_EFFORT, "survey_effort_by_transect_total.png"),
+#                    scope_cap(.te_scope(nrow(recs2), nrow(spec) + nrow(inat)),
+#                              "lethal + non-lethal pooled", "records", n = nrow(recs2)))
 effort_total_chart(tr_tbl_fair, file.path(OUT_JOURNAL, "transect_effort_total_journal.png"),
                    scope_cap(scope  = "fair window: survey-only, Mar-Oct 2021-2023 (OT excluded -- added 2024)",
                              method = "lethal + non-lethal pooled", rank = "records (by transect)"))
 
-message("Wrote survey_effort_by_transect.png + survey_effort_by_transect_richness.csv to ", COV_EFFORT,
-        " | transect_effort_journal.png/.csv to ", OUT_JOURNAL)
+message("Wrote survey_effort_by_transect_richness.csv to ", COV_EFFORT,
+        " | transect_effort_journal.png/.csv + transect_effort_total_journal.png to ", OUT_JOURNAL)
+message("  (the report charts are now records_near_transect.R -- every record placed ",
+        "on a transect, not only the tagged ones)")

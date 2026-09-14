@@ -285,9 +285,10 @@ clean_specimens <- function(interactive_ok = (Sys.getenv("BEESCABR_NONINTERACTIV
     label = c("unknown names (typo or new taxon)", "duplicate IDs", "missing lat/long", "missing specimens"),
     count = c(n_taxonomy, nrow(dupe_rows), nrow(loc_missing), nrow(miss_rows)),
     file  = basename(c(flags_out, dupes_out, locmiss_out, missing_out)),
+    what  = .review_what_specimens(),
     stringsAsFactors = FALSE)
   if (resolve_review_gate(review_items, review_dir, interactive_ok, prompt_fn,
-                          fix_hint = "the raw .xlsx (find each row by ucsd_id / sdnhm_id)") == "stop")
+                          fix_hint = .specimen_fix_hint()) == "stop")
     stop("Stopping so you can review/fix the flagged rows in the raw .xlsx, then re-run. Review files: ", review_dir)
 
   # determiner provenance: map the raw "determination" code (initials + surname) to the identifier

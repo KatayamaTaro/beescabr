@@ -128,10 +128,8 @@ plot_evenness <- function(dfin, file, title, cap, group_lab) {
     scale_fill_manual(values = BEE_TRANSECT, guide = "none"),
     scale_y_continuous(limits = c(0, 1), expand = expansion(mult = c(0, 0.08))),
     labs(title = title,
-         subtitle = sprintf("Communities stay fairly balanced across transects. Evenness runs %.2f to %.2f, so no single species dominates.",
-                            min(d$pielou_evenness), max(d$pielou_evenness)),
          caption = cap,   # rationale (why only evenness) moved to the report text -- caption stays scope_cap only
-         x = group_lab, y = "how evenly bees are spread   (0 = one dominates, 1 = all equal)"),
+         x = group_lab, y = "Evenness"),
     theme_beescabr(11),
     theme(panel.grid.major.x = element_blank(), plot.title = element_text(hjust = 0.5),
           plot.caption = element_text(hjust = 0, size = 7.5)))
@@ -155,9 +153,9 @@ plot_evenness <- function(dfin, file, title, cap, group_lab) {
   bee_ggsave(file, g, width = 7.5, height = 5.4, bg = "white")
 }
 plot_evenness(div_tr, file.path(OUT_REPORT, "bee_evenness_by_transect_pielou.png"),
-             "Does one bee dominate any transect?",
+             "Evenness",
              scope_cap("survey records only", "lethal + non-lethal pooled", "species vs genus", sig = bee_test("Pielou's evenness (J')")),
-             "transect")
+             "Transect")
 
 # ---- 3. ALPHA DIVERSITY BY YEAR (survey-only, both methods, Mar-Sep, species) --
 rec_win <- rec %>% filter(month %in% WINDOW_MONTHS, !is.na(year))

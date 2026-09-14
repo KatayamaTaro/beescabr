@@ -66,6 +66,10 @@ BEESCABR_PACKAGES <- c(
   "vegan", "iNEXT", "bipartite", "igraph",
   # reference data + docs
   "rredlist", "pdftools", "rmarkdown",
+  # magick: shrinks the team photos before they are embedded in the acknowledgements
+  # page. macOS has `sips` built in; magick is what covers Windows and Linux, where the
+  # page was otherwise built with full-size headshots in it (13 MB against 2.2 MB).
+  "magick",
   # tests
   "testthat", "withr",
   # quality of life
@@ -262,6 +266,8 @@ PATHS <- list(
   plant_specimen_overrides = "data/reference/hand_curated/plant_specimen_overrides.csv",      # curated expert corrections for specimen-label plants
   plant_not_in_park = "data/reference/generated/cabr_plant_specimen_not_in_park.csv",       # worklist: specimen-label plants not confirmed in park
   plant_name_cache = "data/reference/generated/plant_name_resolution_cache.csv",           # name -> iNat taxon resolution cache
+  taxon_changes_review = "data/reference/generated/qc_review_taxon_changes_generated.csv", # yearly sweep: taxa iNaturalist has revised
+  holway_answers_version = "data/reference/generated/holway_answers_version.txt",          # which checklist version the saved answers were made against
   plant_all_taxa = "data/inat_observations/reference/cabr_inat_plant_all_taxa_generated.csv",   # ALL in-park plant taxa (any observer) -- in-park truth
   plant_park_confirmed = "data/reference/hand_curated/plant_park_confirmed.csv",               # curated: species the botanist confirms are in the park (e.g. obscured threatened taxa)
   inat_bee_forage = "data/inat_observations/reference/cabr_inat_bee_forage_generated.csv",       # plants bees were recorded foraging on in-park (bee-obs flower_visited) -- in-park truth
@@ -387,7 +393,9 @@ PATH_KIND <- list(
   # --- optional: caches + on-demand reviewer worklists ---
   complex_map              = "optional",
   plant_not_in_park        = "optional",
-  plant_name_cache         = "optional"
+  plant_name_cache         = "optional",
+  taxon_changes_review     = "output",
+  holway_answers_version   = "output"
 )
 
 # Report every PATHS entry whose file is missing when the contract says it should be

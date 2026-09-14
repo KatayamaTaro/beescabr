@@ -80,6 +80,7 @@ source("scripts/inat_observations/review/qc_review_inat_misid.R")         # defi
 # verify.R, checklist_build.R) via need().
 source("scripts/reference/prompts/manual_overrides.R")        # apply_manual_overrides / write_review_worklist (name-change fixes)
 source("scripts/reference/taxonomy/holway_reference_build.R")  # defines build_holway_reference() -- stage 4 (interactive)
+source("scripts/reference/taxonomy/holway_version.R")          # "is there a newer checklist, and what changed?"
 source("scripts/reference/taxonomy/taxonomy_lookup_build.R")   # defines build_taxonomy_lookup() -- stage 5
 source("scripts/reference/prompts/verify_prompt.R")           # defines prompt_verify_taxa() -- pass-2 verification
 source("scripts/reference/taxonomy/plant_lookup_join.R")           # attach_flower_ids() -- flower taxon_id + in_park
@@ -123,8 +124,15 @@ main <- function() {
   # from each cache's own retrieved_on dates, oldest entry first. Anything past a year is
   # refreshed AUTOMATICALLY at phase 0 below -- nobody should have to remember a flag once
   # a year. An offline run cannot, and says so instead. ----
-  .overdue <- refresh_overdue()
+  .ages    <- refresh_ages()
+  .overdue <- Filter(function(x) isTRUE(x$due), .ages)
   .offline <- Sys.getenv("BEESCABR_SKIP_INGEST", "0") == "1"
+  # Say how old every cache is, every run -- not only once something has already been
+  # stale for a year. "checked 8 months ago" is information; the same fact withheld
+  # until it becomes a prompt is a surprise.
+  message("")
+  bx_cont("Reference data, last checked against the live sources:")
+  for (ln in refresh_age_lines(.ages)) message(ln)
   if (length(.overdue)) {
     message("")
     for (o in .overdue) bx_note("stale reference: ", o$key, " -- ", o$reason)
@@ -183,6 +191,17 @@ main <- function() {
              error = function(e) bx_note("IUCN refresh failed (", conditionMessage(e), ") — kept the existing cache."))
     tryCatch(source("scripts/reference/refresh/refresh_plant_common_names.R"),
              error = function(e) bx_note("plant-name refresh failed (", conditionMessage(e), ") — kept the existing cache."))
+  }
+
+  # The plant taxon cache is asked for on its own. It is an hour rather than minutes,
+  # and it ends in questions -- which the yes above explicitly promises it will not do.
+  # Same shape as the ingest menu: say what it costs before anyone commits.
+  if (!.offline && length(refresh_split(.overdue)$slow) &&
+      refresh_confirm_slow(is_interactive = interactive() &&
+                             Sys.getenv("BEESCABR_NONINTERACTIVE", "0") != "1")) {
+    tryCatch(source("scripts/reference/refresh/refresh_plant_taxon_ids.R"),
+             error = function(e) bx_note("plant-number refresh failed (", conditionMessage(e),
+                                         ") — kept the existing numbers."))
   }
 
   bx_phase(1, "SETUP & FETCH")
@@ -331,6 +350,65 @@ main <- function() {
   # failure keeps the existing table and never kills the run.
   bx_phase(3, "TAXONOMY")
   bx_kv("Holway table", "matching the SD bee checklist names to iNaturalist…")
+  # A newer checklist dropped into data/reference/source/ is NOT picked up on its own:
+  # the version is written into two config.R keys, and moving to it changes which bees
+  # the whole county tier is built from. Silently reading v3 while a v4 sits beside it
+  # is the failure this catches -- nothing else in the pipeline would ever mention it.
+  local({
+    files <- list.files(HOLWAY_SOURCE_DIR, recursive = TRUE, full.names = TRUE)
+    notice <- holway_version_notice(holway_newer_than(files, PATHS$holway_combined),
+                                    PATHS$holway_combined)
+    if (length(notice)) for (ln in notice) message(ln)
+  })
+  # A CHECKLIST VERSION BUMP WIPES THE SAVED ANSWERS.
+  #
+  # Not for tidiness. A surviving NAME is not evidence the bee survived unchanged:
+  # Holway can keep a spelling and change what it applies to -- a split where the old
+  # name stays with one of the pieces -- and nothing in the string reveals that. The
+  # answer is silently reused and is now about a different bee.
+  #
+  # Re-deriving is cheap and loud: ~700 names are re-searched (the 40 minutes the
+  # rebuild menu already warns about) and only the couple of dozen the matcher cannot
+  # settle come back as questions -- which are exactly the ambiguous bees where a
+  # concept shift is most likely. Keeping them is free and silent, and silent is the
+  # one this project does not accept: "a wrong taxon_id is worse than none."
+  #
+  # Every answer is written out first. A version bump is triggered by a person editing
+  # two paths in config.R, and doing that by mistake must not cost a year of work.
+  local({
+    v_now <- holway_version_of(PATHS$holway_combined)
+    vf    <- PATHS$holway_answers_version
+    v_was <- if (file.exists(vf))
+      suppressWarnings(as.integer(readLines(vf, warn = FALSE)[1])) else NA_integer_
+    if (holway_version_bumped(v_now, v_was)) {
+      backup <- file.path(dirname(vf),
+                          sprintf("holway_answers_v%d_%s.csv", v_was, format(Sys.Date())))
+      n_saved <- tryCatch(decision_export(con, backup), error = function(e) NA_integer_)
+      n_gone  <- tryCatch(decision_forget_all(con), error = function(e) 0L)
+      for (ln in holway_version_bump_notice(v_was, v_now, n_gone,
+                                            if (is.na(n_saved)) NA_character_ else backup))
+        message(ln)
+    }
+    if (!is.na(v_now)) {
+      dir.create(dirname(vf), recursive = TRUE, showWarnings = FALSE)
+      writeLines(as.character(v_now), vf)
+    }
+  })
+
+  # Answers for bees that have left the checklist are never read again -- the build
+  # below loops over the names in the CURRENT sheet -- but they pile up across
+  # versions. Dropping them changes no output and costs no re-resolution: nothing was
+  # going to look them up. Guarded on the checklist being readable, because this is a
+  # DELETE driven by a file read.
+  local({
+    hdf <- tryCatch(load_holway(PATHS$holway_combined), error = function(e) NULL)
+    if (is.null(hdf)) return(invisible(NULL))
+    terms <- tryCatch(mapply(holway_search_term, hdf$source_sheet, hdf$genus, hdf$species_raw,
+                             USE.NAMES = FALSE),
+                      error = function(e) character(0))
+    gone <- tryCatch(forget_orphan_decisions(con, terms), error = function(e) character(0))
+    if (length(gone)) for (ln in orphan_decisions_note(gone)) bx_cont(ln)
+  })
   tryCatch({
     .hdf <- load_holway(PATHS$holway_combined)
     .ref <- build_holway_reference(con, .hdf,
@@ -415,11 +493,15 @@ main <- function() {
   tryCatch({
     obs_rev   <- "data/inat_observations/review"
     obs_items <- data.frame(
-      label = c("bee behavior to fix (survey)", "bee flowers to add (non-survey)", "stray transect tags"),
+      label = c(.review_labels_inat(), "stray transect tags"),
       count = c(.n_rows(file.path(obs_rev, "qc_review_inat_bee_behavior_survey_generated.csv")),
                 .n_rows(file.path(obs_rev, "qc_review_inat_bee_behavior_nonsurvey_generated.csv")),
                 .n_rows(file.path(obs_rev, "qc_review_inat_mistagged_transects_generated.csv"))),
       file  = c("qc_review_inat_bee_behavior_survey_generated.csv", "qc_review_inat_bee_behavior_nonsurvey_generated.csv", "qc_review_inat_mistagged_transects_generated.csv"),
+      what  = c(.review_what_inat(),
+                paste("The observation carries a transect tag that disagrees with the",
+                      "transect the rest of that surveyor's day was on. Usually a typo in",
+                      "the tag; open the URL and correct it.")),
       stringsAsFactors = FALSE)
     resolve_review_gate(obs_items, obs_rev,
                         interactive_ok = interactive() && Sys.getenv("BEESCABR_NONINTERACTIVE", "0") != "1",

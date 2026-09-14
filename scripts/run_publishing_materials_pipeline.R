@@ -43,6 +43,19 @@ unlink("data/spatial/basemap_tiles", recursive = TRUE)
 # FIRST BUILD: say what GitHub Pages needs before spending five minutes rendering.
 # Shown only when docs/ holds no site yet, so an established setup never sees it.
 if (!exists("website_setup_notice")) source("scripts/website/setup_notice.R")
+if (!exists(".pub_copying")) source("scripts/website/publish_messages.R")
+
+# Where the site will be, from the git remote. setup_notice.R already knows how to
+# read it; this is the same derivation, so the URL printed at deploy time is the URL
+# the first-build notice promised.
+.pub_site_url <- function() {
+  remote <- tryCatch(system2("git", c("remote", "get-url", "origin"),
+                             stdout = TRUE, stderr = FALSE)[1], error = function(e) "")
+  if (is.na(remote)) remote <- ""
+  gh <- .parse_github_remote(remote)
+  if (is.null(gh)) "your GitHub Pages site"
+  else sprintf("https://%s.github.io/%s", tolower(gh$owner), gh$repo)
+}
 local({
   remote <- tryCatch(system2("git", c("remote", "get-url", "origin"),
                              stdout = TRUE, stderr = FALSE)[1], error = function(e) "")
@@ -51,7 +64,7 @@ local({
   if (!is.null(notice)) message(paste(notice, collapse = "\n"))
 })
 
-message("==> STAGE 3: regenerating public report HTML")
+message("\n==> Rebuilding the ", length(PUBLIC_PAGES), " pages that go on the public site")
 ok <- vapply(PUBLIC_PAGES, function(nm) {
   message("    ", nm)
   # PUBLIC_PAGES holds FILE NAMES, not paths: scripts/analysis/ is foldered by
@@ -59,36 +72,48 @@ ok <- vapply(PUBLIC_PAGES, function(nm) {
   hit <- list.files("scripts/analysis", pattern = paste0("^", nm, "$"),
                     recursive = TRUE, full.names = TRUE)
   if (length(hit) != 1L) {
-    message("      !! ", if (!length(hit)) "NOT FOUND" else "AMBIGUOUS", " under scripts/analysis/")
+    for (ln in .pub_page_missing(nm, length(hit))) message(ln)
     return(FALSE)
   }
   tryCatch({ source(hit); TRUE },
-           error = function(e) { message("      !! FAILED: ", conditionMessage(e)); FALSE })
+           error = function(e) {
+             for (ln in .pub_page_failed(nm, conditionMessage(e))) message(ln)
+             FALSE })
 }, logical(1))
 # A page that did not rebuild would be published STALE, silently. Stop instead:
 # the site is the one output the public sees, and a half-built one is worse than
 # none. (This is the same swallow-and-continue that hid a broken specimen stage
 # for a week.)
 if (any(!ok))
-  stop("These public pages failed to rebuild: ", paste(PUBLIC_PAGES[!ok], collapse = ", "),
-       "\nFix them before publishing -- docs/ would otherwise go out with stale pages.",
-       call. = FALSE)
+  stop(paste(.pub_stop(PUBLIC_PAGES[!ok]), collapse = "\n"), call. = FALSE)
 
-message("\n==> Publishing into docs/")
+message("\n==> ", .pub_copying())
 pub <- tryCatch(system2("Rscript", "scripts/website/publish_pages.R", stdout = TRUE, stderr = TRUE),
                 error = function(e) conditionMessage(e))
 message(paste(pub, collapse = "\n"))
 
+# publish_pages.R refuses an empty or a stale docs/ by printing "STOPPING: ..." and
+# returning FALSE -- it does not stop(), so Rscript exits 0 either way. Nothing here
+# used to check: the refusal scrolled past, "Site rebuilt in docs/" was announced on
+# top of it, and with BEESCABR_DEPLOY=1 the half-built folder was committed and pushed
+# live. Same reasoning as the page-rebuild stop above -- a half-built public site is
+# worse than none. Both refusals already print the commands that fix them, so this
+# only has to be loud and stop.
+if (!exists("publish_run_failed")) source("scripts/website/publish_pages.R")
+if (publish_run_failed(pub))
+  stop("The site was NOT published -- docs/ and the live site are unchanged.",
+       "\n  The reason is in the output just above, with the commands that fix it.",
+       call. = FALSE)
+
 if (identical(Sys.getenv("BEESCABR_DEPLOY"), "1")) {
-  message("\n==> Deploying (BEESCABR_DEPLOY=1)")
+  for (ln in .pub_deploying(.pub_site_url())) message("\n==> ", ln)
   system2("git", c("add", "docs/"))
   if (system2("git", c("diff", "--cached", "--quiet")) != 0L) {   # non-zero = there ARE staged changes
     system2("git", c("commit", "-m", "Rebuild published site (docs/)"))
     system2("git", c("push", "origin", "main"))
-    message("    deployed -- GitHub Pages will update in ~1 minute.")
+    message("    done.")
   } else message("    no site changes to deploy.")
 } else {
-  message("\nSite rebuilt in docs/. To deploy:")
-  message("    git add docs/ && git commit -m 'Rebuild site' && git push")
-  message("  (or re-run with BEESCABR_DEPLOY=1 to do that automatically).")
+  message("")
+  for (ln in .pub_next_steps()) message(ln)
 }

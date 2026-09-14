@@ -87,6 +87,18 @@ STAT_SOURCES <- list(
                     "(2008). A consistent metric for nestedness analysis in ecological systems:",
                     "reconciling concept and measurement. Oikos 117, 1227-1239."),
        use = "NODF nestedness metric; vegan::nestednodf."),
+  list(pat = "Bray|bray|PERMANOVA|NMDS|dissimilar",
+       src = "Bray & Curtis 1957", verified = FALSE,
+       full = paste("Bray, J.R. & Curtis, J.T. (1957). An ordination of the upland forest",
+                    "communities of southern Wisconsin. Ecological Monographs 27, 325-349."),
+       use = paste("the dissimilarity every PERMANOVA and NMDS result is computed on",
+                   "(method/distance = \"bray\"); vegan::adonis2 and vegan::metaMDS.")),
+  list(pat = "r2dtable|Patefield",
+       src = "Patefield 1981", verified = FALSE,
+       full = paste("Patefield, W.M. (1981). An efficient method of generating random R x C",
+                    "tables with given row and column totals. Applied Statistics 30, 91-97."),
+       use = paste("the null the H2' p-value is tested against: random tables with the same",
+                   "row and column totals; stats::r2dtable.")),
   list(pat = "quasiswap|NODF|nested",
        src = "Miklos & Podani 2004", verified = TRUE,
        full = paste("Miklos, I. & Podani, J. (2004). Randomization of presence-absence matrices:",
@@ -122,6 +134,48 @@ STAT_SOURCES <- list(
 # the numbers were actually produced with rather than what was installed once.
 REF_PACKAGES <- c("vegan", "iNEXT", "bipartite")
 
+# Every source the numbers rest on, not only the statistics. iNaturalist and IUCN
+# are built by citations.R (which the website already uses) so the version and
+# access date are the real ones rather than a typed guess.
+.data_sources <- function() {
+  if (!exists("inat_citation")) {
+    # the pipeline runs from the repo root, a test does not -- look upward rather
+    # than assuming, or the data sources silently vanish from the file
+    cand <- file.path(c(".", "..", "../..", "../../.."), "scripts/website/citations.R")
+    f <- cand[file.exists(cand)][1]
+    if (is.na(f)) return(character(0))
+    source(f)
+  }
+  # the access date is the day the data was last pulled, not today -- these
+  # references describe the numbers in this folder
+  .ingest <- "data/inat_observations/cache/last_ingest.txt"
+  asof <- if (file.exists(.ingest)) {
+    v <- readLines(.ingest, warn = FALSE)[1]
+    if (is.na(v) || !nzchar(v)) format(Sys.Date()) else substr(v, 1, 10)
+  } else format(Sys.Date())
+  .iucn <- "data/checklists/iucn/iucn_redlist_version_generated.txt"
+  iucn_v <- if (file.exists(.iucn)) citation_read_version(.iucn) else ""
+
+  c(inat_citation(asof),
+    if (nzchar(iucn_v)) iucn_citation(iucn_v, asof) else
+      "IUCN Red List of Threatened Species. https://www.iucnredlist.org -- not fetched for this run; the status column reads \"Not Evaluated\".",
+    paste("Integrated Taxonomic Information System (ITIS). https://www.itis.gov.",
+          "-- consulted when iNaturalist has no page for a checklist name, to tell a",
+          "real-but-unpublished bee from a name that was renamed or withdrawn."),
+    paste("Hung, K.-L.J., Mullins, J.L., Rightmyer, M.G., Wall, M., Berrian, J.,",
+          "Ascher, J.S., Yanega, D., Davids, J.A. & Holway, D.A. (2026). Checklist,",
+          "Version 3. In An Annotated Checklist of the Bees (Hymenoptera: Anthophila)",
+          "of San Diego County, California. UC San Diego Library Digital Collections.",
+          "https://doi.org/10.6075/J0NZ88MD -- the county species list every checklist",
+          "tier is compared against."),
+    paste("National Park Service, Land Resources Division. Cabrillo National Monument",
+          "administrative boundary. -- the authoritative park outline."),
+    paste("City of San Diego. Community Plan districts (Peninsula, CPCODE 30).",
+          "-- the Point Loma tier boundary."),
+    paste("San Diego Natural History Museum (SDNHM). -- accession numbers for the",
+          "deposited specimens."))
+}
+
 references_text <- function(sources = STAT_SOURCES) {
   seen <- character(0); refs <- character(0); marks <- logical(0)
   for (x in sources) {
@@ -131,13 +185,17 @@ references_text <- function(sources = STAT_SOURCES) {
   o <- order(refs); refs <- refs[o]; marks <- marks[o]
 
   out <- c("REFERENCES CITED", strrep("=", 16), "",
-    .wrap(paste("The statistical methods behind the figures and tables in this folder, and",
-                "where each comes from. The short form appears in each folder's",
+    .wrap(paste("Where the data came from, and where each statistical method comes from.",
+                "The short form of a method appears in each folder's",
                 "WHAT_THESE_FILES_ARE.txt; the full reference is here.")), "",
     .wrap(paste("A reference marked [pkg] was checked against the installed package's own",
                 "documentation or citation(). The rest were typed by hand and are worth a",
                 "spot-check before publication.")), "",
-    "METHODS", strrep("-", 7), "")
+    "DATA SOURCES", strrep("-", 12), "")
+  for (d in .data_sources())
+    out <- c(out, .wrap(d, indent = "      ", exdent = "        "), "")
+
+  out <- c(out, "METHODS", strrep("-", 7), "")
   for (i in seq_along(refs))
     out <- c(out, .wrap(paste0(if (marks[i]) "[pkg] " else "      ", refs[i]),
                         indent = "", exdent = "        "), "")

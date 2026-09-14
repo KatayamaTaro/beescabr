@@ -39,24 +39,56 @@ RW_PATH <- "data/project_info/surveys/review/qc_review_survey_beeple_date_window
 .rw_help <- function() {
   bar <- strrep("-", 60)
   cat("\n", bar, "\n", sep = "")
-  cat(" Ruling survey windows the brain couldn't auto-confirm:\n\n")
-  cat("   y   survey  -- yes it happened (recorded ONLY; NOT added to master_per_survey_info -- no tag = not a survey day)\n")
-  cat("   n   no      -- it did not happen\n")
-  cat("   u   unsure  -- record as unsure, revisit next run\n")
-  cat("   s   skip    -- leave blank, revisit next run\n")
-  cat("   l   list    -- show the observation URLs near this window (look before you rule)\n")
-  cat("   q   save & quit                                   ?  show this help\n")
-  cat(" Each window prints a SUGGESTED ruling: 'SUGGEST NO' (empty / off-site) can usually\n")
-  cat(" just be answered n; 'LOOK' = a thin in-CABR cluster worth a glance -- press l first.\n")
+  cat(" DID THIS SURVEY HAPPEN?\n\n")
+  cat("   Someone was scheduled to walk a transect on these dates, and no photos were\n")
+  cat("   tagged as a survey anywhere near them. That is all this is asking: did the\n")
+  cat("   survey happen and go untagged, or did it not happen at all?\n\n")
+  cat("   y   yes, it happened\n")
+  cat("   n   no, it did not\n")
+  cat("   u   unsure    -- recorded as unsure; you are asked again next run\n")
+  cat("   s   skip      -- nothing recorded; you are asked again next run\n")
+  cat("   l   look      -- where to check before you answer\n")
+  cat("   q   save and stop                                 ?  show this again\n\n")
+  cat("   Answering yes records your answer and nothing more. It does NOT add a survey\n")
+  cat("   day to\n")
+  cat("     data/project_info/surveys/master_per_survey_info_generated.csv\n")
+  cat("   because that file is built only from photos that carry a survey tag. Your\n")
+  cat("   answer is the record that somebody looked and decided.\n\n")
+  cat("   Each one comes with a suggested answer. SUGGEST NO means nothing was found\n")
+  cat("   near those dates anywhere; LOOK means a few photos were taken inside the park\n")
+  cat("   around then, so it is worth pressing l first.\n")
   cat(bar, "\n", sep = "")
 }
 
-# print the obs URLs stored on a review row (in-CABR ones first), on demand ("l").
+# "l" -- where to look before ruling on a window.
+#
+# The windows file has no obs_urls column: that column is written by
+# resolve_beeple_transects_per_survey.R, into the TRANSECT-TIE file, not this one. So
+# the blank branch here is not an edge case, it is every row -- and it used to print
+# "(no observations near this window)" and stop, which is the opposite of the help's
+# "press l first to look". Blank is also not a surprise: a window is being asked about
+# BECAUSE nothing tagged was found near it. What the row does carry is who the
+# surveyor is and which dates are in question, which is enough to go and look.
 .rw_list_urls <- function(rv, i) {
   urls <- if ("obs_urls" %in% names(rv)) rv$obs_urls[i] else NA_character_
-  if (.rw_blank(urls)) { cat("   (no observations near this window)\n"); return(invisible()) }
+  if (.rw_blank(urls)) {
+    cat("   No tagged survey by anyone was recorded near these dates -- that is why\n")
+    cat("   this window is being asked about. Untagged photos can still exist, so to\n")
+    cat(sprintf("   check for yourself, look for photos dated %s to %s:\n",
+                rv$window_start[i], rv$window_end[i]))
+    u <- if ("inat_username" %in% names(rv)) rv$inat_username[i] else NA_character_
+    if (.rw_blank(u)) {
+      cat(sprintf("     %s has no iNaturalist name on file -- add one in\n",
+                  if ("first_name" %in% names(rv)) rv$first_name[i] else "This surveyor"))
+      cat("     data/project_info/rosters/people_manual.csv\n")
+    } else {
+      cat("     https://www.inaturalist.org/people/", trimws(as.character(u)), "\n", sep = "")
+    }
+    return(invisible())
+  }
   parts <- trimws(strsplit(as.character(urls), ";\\s*")[[1]]); parts <- parts[nzchar(parts)]
-  cat(sprintf("   %d observation(s) near this window (in-CABR first):\n", length(parts)))
+  cat(sprintf("   %d observation(s) near this window (the ones inside the park first):\n",
+              length(parts)))
   for (u in parts) cat("     ", u, "\n")
 }
 
@@ -69,11 +101,14 @@ RW_PATH <- "data/project_info/surveys/review/qc_review_survey_beeple_date_window
 #' @return Invisibly, how many were resolved.
 review_windows <- function(path = RW_PATH, prompt_fn = readline, write = TRUE, max_items = Inf) {
   if (!file.exists(path)) {
-    message("No review file at ", path, " -- run finding_project_info() first.")
+    message("Nothing to review: ", path)
+    message("does not exist yet. It is written by the cleaning pipeline, so run that first:")
+    message('  source("scripts/run_data_cleaning_pipeline.R")')
     return(invisible(NULL))
   }
   rv <- read_csv(path, show_col_types = FALSE, col_types = cols(.default = "c"))
-  if (!nrow(rv)) { message("No windows to review."); return(invisible(rv)) }
+  if (!nrow(rv)) { message("Nothing to review -- every scheduled survey was accounted for.")
+                   return(invisible(rv)) }
   if (!"decision" %in% names(rv))      rv$decision <- NA_character_
   if (!"decision_note" %in% names(rv)) rv$decision_note <- NA_character_
 
@@ -81,7 +116,9 @@ review_windows <- function(path = RW_PATH, prompt_fn = readline, write = TRUE, m
   done <- nrow(rv) - length(todo)
   if (!length(todo)) { message(sprintf("All %d windows already ruled -- nothing to do.", nrow(rv))); return(invisible(rv)) }
 
-  message(sprintf("%d window(s) to rule (%d already done).", length(todo), done))
+  message(sprintf("%d scheduled survey%s to decide about (%d already answered).",
+                  length(todo), if (length(todo) == 1L) "" else "s", done))
+  message("Your answers are saved in ", path)
   .rw_help()
   changed <- FALSE
   n_show <- min(length(todo), max_items)
@@ -89,13 +126,17 @@ review_windows <- function(path = RW_PATH, prompt_fn = readline, write = TRUE, m
     i <- todo[k]
     cat(sprintf("\n[%d/%d] %s (%s)\n", k, n_show,
                 rv$first_name[i], if (.rw_blank(rv$inat_username[i])) "no iNat user" else rv$inat_username[i]))
-    cat(sprintf("   %s -> %s  |  transect %s  |  year %s\n",
-                rv$window_start[i], rv$window_end[i], rv$transect[i], rv$year[i]))
+    cat(sprintf("   scheduled to walk transect %s, %s to %s\n",
+                rv$transect[i], rv$window_start[i], rv$window_end[i]))
+    # The suggestion column already reads as a sentence; the raw review_reason is an
+    # internal code ("no-survey-near") that means nothing to anyone but this script.
     if ("suggestion" %in% names(rv) && !.rw_blank(rv$suggestion[i]))
-      cat(sprintf("   >> %s\n", rv$suggestion[i]))
+      cat(sprintf("   %s\n", rv$suggestion[i]))
     else
-      cat(sprintf("   reason: %s   (obs near window: %s)\n", rv$review_reason[i], rv$n_obs_in_window[i]))
-    cat("   y=survey  n=no  u=unsure  s=skip  l=list obs URLs  q=save & quit  ?=help\n")
+      cat(sprintf("   %s photo%s were taken inside the park near those dates.\n",
+                  rv$n_obs_in_window[i], if (identical(rv$n_obs_in_window[i], 1L)) "" else "s"))
+    cat("   Did this survey happen?\n")
+    cat("     y=yes  n=no  u=unsure  s=skip  l=where to look  q=save and stop  ?=help\n")
 
     repeat {
       ans <- tolower(trimws(prompt_fn("> ")))
@@ -113,7 +154,10 @@ review_windows <- function(path = RW_PATH, prompt_fn = readline, write = TRUE, m
 
   if (changed && write) {
     write.csv(rv, path, row.names = FALSE, na = "")
-    cat(sprintf("\nSaved rulings -> %s  (a review record ONLY -- rulings are NOT added to master_per_survey_info; no tag = not a survey day)\n", path))
+    cat(sprintf("\nSaved your answers -> %s\n", path))
+    cat("These are a record that somebody looked and decided. They do not add survey\n")
+    cat("days to data/project_info/surveys/master_per_survey_info_generated.csv, which\n")
+    cat("is built only from photos carrying a survey tag.\n")
   } else cat("\nNo new rulings written.\n")
   invisible(rv)
 }
@@ -147,16 +191,19 @@ RTT_PATH <- "data/project_info/surveys/review/qc_review_survey_transect_overlap_
 .rtt_help <- function() {
   bar <- strrep("-", 60)
   cat("\n", bar, "\n", sep = "")
-  cat(" Ruling equal-split transect days (no clear majority tag):\n\n")
-  cat("   A beeple's obs for one day are tagged EVENLY across two transects, as if they\n")
-  cat("   walked both. The counts show exactly what they tagged. Decide what it really was:\n\n")
-  cat("   TP / UPMON / ...  pick the ONE real transect -> the WHOLE day is stamped that;\n")
-  cat("                     the other tag's obs -> qc_review_inat_mistagged_transects_generated.csv\n")
-  cat("   b  both     -- a genuine two-transect day; keep every obs on its own tag\n")
-  cat("   u  unsure   -- revisit next run\n")
-  cat("   s  skip     -- leave blank, revisit next run\n")
-  cat("   l  list     -- show this day's observation URLs (look before you rule)\n")
-  cat("   q  save & quit                                    ?  show this help\n")
+  cat(" WHICH TRANSECT DID THEY WALK?\n\n")
+  cat("   On this day the surveyor split their photos evenly between two transects, as\n")
+  cat("   if they walked both. Usually they walked one and tagged some photos wrongly.\n")
+  cat("   The counts below are exactly what they tagged.\n\n")
+  cat("   TP        type a transect code to say that is the one they walked. The whole\n")
+  cat("             day is recorded as that transect, and the photos tagged with the\n")
+  cat("             other one are listed for a second look in\n")
+  cat("             data/inat_observations/review/qc_review_inat_mistagged_transects_generated.csv\n")
+  cat("   b  both   they really did walk both. Every photo keeps the transect it has.\n")
+  cat("   u  unsure recorded as unsure; you are asked again next run\n")
+  cat("   s  skip   nothing recorded; you are asked again next run\n")
+  cat("   l  look   where to check before you answer\n")
+  cat("   q  save and stop                                  ?  show this again\n")
   cat(bar, "\n", sep = "")
 }
 
@@ -178,7 +225,8 @@ RTT_PATH <- "data/project_info/surveys/review/qc_review_survey_transect_overlap_
 #' @return Invisibly, how many were ruled on. No tie file means no ties.
 review_transect_ties <- function(path = RTT_PATH, prompt_fn = readline, write = TRUE, max_items = Inf) {
   if (!file.exists(path)) {
-    message("No tie file at ", path, " -- run finding_project_info() first (0 ties = nothing to rule).")
+    message("Nothing to review here -- no survey day looks split between two transects.")
+    message("(If you expected some, the file the cleaning pipeline writes is ", path, ")")
     return(invisible(NULL))
   }
   tv <- read_csv(path, show_col_types = FALSE, col_types = cols(.default = "c"))
@@ -198,11 +246,11 @@ review_transect_ties <- function(path = RTT_PATH, prompt_fn = readline, write = 
     i <- todo[k]
     opts <- .rtt_options(tv$tag_counts[i])
     cat(sprintf("\n[%d/%d] %s  on %s\n", k, n_show, tv$inat_username[i], tv$date[i]))
-    cat("   equal split -- looks like two transects in one day.\n")
-    cat(sprintf("   the surveyor tagged their obs:  %s\n", tv$tag_counts[i]))
-    cat(sprintf("   pick the ONE real transect (%s), or 'b'=both to keep it a two-transect day\n",
-                paste(opts, collapse = "/")))
-    cat("   b=both  u=unsure  s=skip  l=list obs URLs  q=save & quit  ?=help\n")
+    cat(sprintf("   they tagged their photos:  %s\n", tv$tag_counts[i]))
+    cat("   Which transect did they really walk?\n")
+    cat(sprintf("     type %s, or b=both if they genuinely walked both\n",
+                paste(opts, collapse = " or ")))
+    cat("     u=unsure  s=skip  l=where to look  q=save and stop  ?=help\n")
 
     action <- NULL   # resolves to: __quit__ / __skip__ / unsure / both / a transect code
     repeat {
@@ -231,10 +279,21 @@ review_transect_ties <- function(path = RTT_PATH, prompt_fn = readline, write = 
 
   if (changed && write) {
     write.csv(tv, path, row.names = FALSE, na = "")
-    cat(sprintf("\nSaved rulings -> %s  (re-run the brain to stamp each day with your chosen transect)\n", path))
+    cat(sprintf("\nSaved your answers -> %s\n", path))
+    cat("The next cleaning-pipeline run stamps each of those days with the transect you\n")
+    cat("chose. If you are running this from inside the pipeline, that happens on its own.\n")
   } else cat("\nNo new rulings written.\n")
   invisible(tv)
 }
 
+# What to type, and what each question answers. "missing windows" and "equal-split
+# days" named the code's own categories, so neither told you which one to run.
+.rw_sourced_hint <- function() c(
+  "Two things to review here. Run whichever you were sent for:",
+  "  review_windows()         did a scheduled survey happen? (no photos were tagged",
+  "                           for it, so somebody has to say)",
+  "  review_transect_ties()   a surveyor tagged one day evenly across two transects.",
+  "                           Which one did they really walk?")
+
 if (!exists("BEESCABR_SOURCED_BY_RUNNER") && sys.nframe() == 0)
-  message('Sourced. Run: review_windows()  (missing windows)  |  review_transect_ties()  (equal-split days)')
+  for (ln in .rw_sourced_hint()) message(ln)

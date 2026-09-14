@@ -472,7 +472,7 @@ inat_bee_clean <- function(membership_path = IBC_MEMBERSHIP,
   bx_cont("spatial: ", format(n_walk, big.mark = ","), " walk-in re-marked NOT survey · ", format(n_bad, big.mark = ","), " pins off-transect → review")
   bx_cont("annotations: ", format(n_fv, big.mark = ","), " obs with flower_visited")
   bx_cont("fix_behavior: ", format(n_noplant, big.mark = ","), " on-flower but no plant · ", format(n_missing, big.mark = ","), " missing all fields · ", format(n_badflow, big.mark = ","), " non-plant/unresolved flower · ", format(n_notgen, big.mark = ","), " flower not to genus (family-level)")
-  bx_out(basename(IBC_FIX_SURVEY)); bx_out(basename(IBC_FIX_NONSURVEY))
+  bx_out(IBC_FIX_SURVEY); bx_out(IBC_FIX_NONSURVEY)   # the path, not just the name
   invisible(list(clean = clean, fix_behavior = fix_behavior, location_review = location_review))
 }
 

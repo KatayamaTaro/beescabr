@@ -14,25 +14,25 @@ flowchart TD
     direction LR
     C1[checklist_gaps<br/>not on Holway] ~~~ C2[off_transect<br/>park vs transects]
     C3[id_resolution<br/>what needs an ID] ~~~ C4[least_sampled<br/>go-find-it sheet]
-    C5[bee_bounties<br/>which method next] ~~~ C6[records_by_evidence<br/>what backs each taxon]
+    C5[bee_bounties<br/>which bees still need<br/>a net or a photo] ~~~ C6[records_by_evidence<br/>how deep the evidence goes<br/>+ family share of records]
     C7[transect_effort<br/>effort per transect] ~~~ C8[footprint<br/>share of the county]
   end
 
   subgraph RICH[richness/ — how many are there?]
     direction LR
-    R1[accumulation<br/>found them all? Chao2] ~~~ R2[diversity<br/>Shannon · Simpson · NMDS]
-    R3[rarefaction<br/>equal effort — by method AND observer]
+    R1[accumulation<br/>found them all? Chao2] ~~~ R2[diversity<br/>how evenly spread?<br/>Pielou evenness · rank-abundance<br/>NMDS + PERMANOVA]
+    R3[rarefaction<br/>richness at equal effort<br/>by transect · year · method · observer]
   end
 
   subgraph INT[interactions/ — who visits what?]
     direction LR
-    I1[networks<br/>the web · H2′ · NODF] ~~~ I2[top_plants<br/>most-visited plants]
+    I1[networks<br/>how bees and plants are related<br/>H2′ · NODF] ~~~ I2[top_plants<br/>most-visited plants]
   end
 
   subgraph PHEN[phenology/ — when? · no subfolders, files sit here]
     direction LR
     P1[bee activity by month<br/>+ Rayleigh test] ~~~ P2[plant bloom timing]
-    P3[survey effort by month] ~~~ P4[most-observed bee,<br/>year to year]
+    P3[survey effort by month] ~~~ P4[population trends, year to year,<br/>for well-recorded bees<br/>share of records, not counts]
   end
 
   subgraph METH[method_comparison/ — lethal vs non-lethal]
@@ -43,8 +43,8 @@ flowchart TD
 
   subgraph REF[reference/ — for people, not papers]
     direction LR
-    F1[field_guide] ~~~ F2[nps_summary] ~~~ F3[conservation<br/>IUCN]
-    F4[occurrence_map] ~~~ F5[bee_plant] ~~~ F6[transects]
+    F1[field_guide<br/>species + genus] ~~~ F2[nps_summary<br/>plain counts] ~~~ F3[conservation<br/>IUCN]
+    F4[occurrence_map<br/>every record, filterable] ~~~ F5[bee_plant<br/>which bee on which plant] ~~~ F6[transects<br/>the transect map]
   end
 
   COV & RICH & INT & PHEN & METH --> IDX[findings_index.csv<br/>one row per analysis:<br/>type · key finding · file]
@@ -72,12 +72,12 @@ Everything lands under `data/analysis/<year>_generated/`. One folder per questio
 | `coverage/id_resolution` | what needs identifying most | 1 | 2 |
 | `coverage/least_sampled` | the go-find-it sheet | — | 2 |
 | `coverage/off_transect` | bees in the park but off the transects | 1 | 3 |
-| `coverage/records_by_evidence` | what backs each genus and species | 3 | 5 |
+| `coverage/records_by_evidence` | how deep the evidence is per genus and species, plus family share of records | 3 | 5 |
 | `coverage/transect_effort` | per-transect sampling effort | 2 | 2 |
 | `richness/accumulation` | have we found them all? (Chao2) | 3 | 2 |
-| `richness/diversity` | Shannon / Simpson / NMDS | 4 | 3 |
-| `richness/rarefaction` | richness at equal effort — by method, and by observer | 2 | 6 |
-| `interactions/networks` | the plant–bee web, H2′ and NODF | 6 | 10 |
+| `richness/diversity` | how evenly the community is spread — Pielou, rank-abundance, NMDS | 4 | 3 |
+| `richness/rarefaction` | richness at equal effort — by transect, year, method and observer | 2 | 6 |
+| `interactions/networks` | how bees and plants are related — H2′ and NODF | 6 | 10 |
 | `interactions/top_plants` | the plants bees visit most | 2 | 3 |
 | `phenology/` | activity through the year, survey effort by month | 6 | 10 |
 | `method_comparison/yield` | what each **method** turned up, and each **contributor** | 2 | 6 |

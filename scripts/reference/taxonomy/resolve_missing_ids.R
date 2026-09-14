@@ -59,9 +59,34 @@ pick_taxon_id_by_rank <- function(cands, rank, name, parent_id = NA) {
   name = as.character(t$name %||% NA),
   ancestor_ids = suppressWarnings(as.integer(unlist(t$ancestor_ids %||% integer(0)))))
 
+#' Is a cached verdict due to be searched again?
+#'
+#' PURE. The cache used to decide this, and it was permanent: a name searched once and
+#' not found was written as "not_found_or_ambiguous" and never looked at again, so a
+#' bee iNaturalist published afterwards could never be picked up automatically and the
+#' operator's "still have no id" list could only shrink by someone typing an id in by
+#' hand. A not-found answer is only true as of the moment it was asked, so it is asked
+#' again every run -- it is a handful of names, and it is the only thing that shrinks
+#' that list on its own. The cache still records what was last seen; it just no longer
+#' decides whether to look.
+#'
+#' A FOUND id is the exception: it is never re-searched here. iNaturalist does not
+#' un-publish a taxon, and a fresh search could only replace a good id with an
+#' ambiguous one. (Whether a found id can go stale a DIFFERENT way -- iNaturalist
+#' splitting or moving that taxon later -- is not this function's job and is not
+#' currently checked anywhere.)
+#'
+#' @param status The cached verdict ("filled" / "not_found_or_ambiguous").
+#' @param season Unused; kept so callers reading a season-stamped cache still work.
+#' @return Logical, vectorized: TRUE for rows to search again.
+.rmi_stale <- function(status, season = beescabr_season_year()) {
+  !(!is.na(status) & trimws(as.character(status)) == "filled")
+}
+
 # resolve_missing_taxon_ids(): fill df$taxon_id for rows missing it, by iNat name search. Ranks
 # genus/subgenus/complex/species/subspecies. fetch_fn(name) -> raw iNat results (default: live API).
-resolve_missing_taxon_ids <- function(df, cache_path = RMI_CACHE, fetch_fn = NULL, verbose = TRUE) {
+resolve_missing_taxon_ids <- function(df, cache_path = RMI_CACHE, fetch_fn = NULL, verbose = TRUE,
+                                      season = beescabr_season_year()) {
   if (is.null(fetch_fn)) fetch_fn <- function(nm) inat_fetch_taxa_by_name(nm)
   df$taxon_id <- suppressWarnings(as.integer(df$taxon_id))
   rk <- as.character(df$rank)
@@ -92,26 +117,43 @@ resolve_missing_taxon_ids <- function(df, cache_path = RMI_CACHE, fetch_fn = NUL
 
   cache <- if (file.exists(cache_path))
     suppressWarnings(read_csv(cache_path, show_col_types = FALSE)) else
-    tibble(key = character(), taxon_id = integer(), status = character())
+    tibble(key = character(), taxon_id = integer(), status = character(),
+           checked_season = integer())
+  # a cache written before the season stamp existed: every not-found row is due
+  if (!"checked_season" %in% names(cache)) cache$checked_season <- NA_integer_
   ck <- function(rank, term, parent) paste(rank, tolower(trimws(term)), parent %||% "", sep = "|")
 
-  n_new <- 0L; n_hit <- 0L
+  n_new <- 0L; n_hit <- 0L; n_again <- 0L
   for (i in need) {
     key <- ck(rk[i], term[i], parent[i])
     c_row <- cache[cache$key == key, ]
-    if (nrow(c_row)) { id <- suppressWarnings(as.integer(c_row$taxon_id[1])) }
+    fresh <- nrow(c_row) && !.rmi_stale(c_row$status[1])
+    if (fresh) { id <- suppressWarnings(as.integer(c_row$taxon_id[1])) }
     else {
+      if (nrow(c_row)) n_again <- n_again + 1L else n_new <- n_new + 1L
+      # searched again every run, so the stamp records when it was LAST looked for
       cands <- tryCatch(lapply(fetch_fn(term[i]), .rmi_cand), error = function(e) list())
       id <- pick_taxon_id_by_rank(cands, rk[i], term[i], parent[i])
-      cache <- bind_rows(cache, tibble(key = key, taxon_id = id,
-                                       status = if (is.na(id)) "not_found_or_ambiguous" else "filled"))
-      n_new <- n_new + 1L
+      # drop the old verdict FIRST: distinct() below keeps the first row for a key, so
+      # appending beside a stale row would quietly preserve the stale one.
+      cache <- bind_rows(cache[cache$key != key, ],
+                         tibble(key = key, taxon_id = id,
+                                status = if (is.na(id)) "not_found_or_ambiguous" else "filled",
+                                checked_season = as.integer(season)))
     }
     if (!is.na(id)) { df$taxon_id[i] <- id; n_hit <- n_hit + 1L }
   }
   dir.create(dirname(cache_path), recursive = TRUE, showWarnings = FALSE)
   suppressWarnings(write_csv(distinct(cache, key, .keep_all = TRUE), cache_path))
-  if (verbose) message(sprintf("  resolve_missing_taxon_ids: %d rows searched (%d new lookups), %d ids filled -> %s",
-                               length(need), n_new, n_hit, basename(cache_path)))
+  if (verbose) {
+    one <- length(need) == 1L
+    message(sprintf("  Searching iNaturalist for the %d bee%s that still %s no number:",
+                    length(need), if (one) "" else "s", if (one) "has" else "have"))
+    if (n_new)   message(sprintf("    %d looked up for the first time", n_new))
+    if (n_again) message(sprintf("    %d looked up again -- they had no page last time, and", n_again),
+                         "\n      iNaturalist may have published them since")
+    message(sprintf("    %d now have a number. The rest are looked for again every run.", n_hit))
+    message("    ", cache_path)
+  }
   df
 }

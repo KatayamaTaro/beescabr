@@ -225,7 +225,10 @@ REVIEW_STOP_WORDS     <- c("y", "yes", "stop", "fix", "halt", "x")              
 REVIEW_CONTINUE_WORDS <- c("", "n", "no", "skip", "continue", "c", "go", "ok")   # keep going ("" = Enter default)
 .review_ask <- function(prompt_fn, lead) {
   repeat {
-    ans <- tolower(trimws(prompt_fn(paste0(lead, "  Pause to review now?  [y/N]: "))))
+    # the lead is printed above now, wrapped; gluing it into the prompt is what made
+    # the line run off the screen in the first place
+    if (nzchar(lead)) message(lead)
+    ans <- tolower(trimws(prompt_fn("     Pause to review now?  [y/N]: ")))
     if (ans %in% REVIEW_STOP_WORDS)     return("stop")       # check stop first
     if (ans %in% REVIEW_CONTINUE_WORDS) return("continue")   # "" (Enter) lands here -> default continue
     message("     (y = pause & review · Enter = continue)")
@@ -248,21 +251,142 @@ resolve_flag_gate <- function(n_flags, interactive_ok, prompt_fn = readline) {
 #   issues, batch mode    -> print the summary loudly, return "continue" (never blocks automation)
 #   issues, interactive   -> heads-up (blocking = FALSE) is Enter-to-continue; a blocking
 #                            checkpoint uses the STANDARD skip/stop prompt.
+#' The iNaturalist review-gate labels
+#'
+#' "bee behavior to fix" and "bee flowers to add" were two names for one thing, and
+#' neither said what was actually missing. On iNaturalist the flower lives in an
+#' observation field, so if it is absent either the bee was not on a flower or
+#' nobody filled that field in. Naming the field is what makes it fixable.
+#'
+#' @return The two labels, survey first.
+.review_labels_inat <- function()
+  c("flower not recorded on the observation (survey)",
+    "flower not recorded on the observation (non-survey)")
+
+.review_what_inat <- function() {
+  fix <- paste(
+    "HOW TO FIX: open each row's URL on iNaturalist and set both fields --",
+    "\n     Insect on flower                -> Yes / No",
+    "\n     Interaction->Visited flower of  -> the plant",
+    "\n  No flower is a real answer: set the first to No and leave the plant blank.",
+    "\n  Do the survey rows first; the non-survey ones can wait.")
+  c(fix, fix)   # one shared block; the gate prints it once
+}
+
+#' What each specimen review row means, and how to fix it
+#'
+#' A label like "duplicate IDs" names a symptom. These say what went wrong and what
+#' to change, in the order the review_items table lists them.
+#'
+#' @return Four strings: unknown names, duplicate IDs, missing lat/long, missing specimens.
+.review_what_specimens <- function() c(
+  paste("A name on the sheet is not in the taxonomy lookup. Usually a typo to correct;",
+        "sometimes a real bee that is simply new, in which case it gets added on the",
+        "next rebuild and needs nothing from you."),
+  paste("Two rows carry the same museum number, so one specimen's records would be",
+        "credited to the other. Give one of them its own number, or delete the row if",
+        "it is a duplicate entry rather than a duplicate specimen."),
+  paste("No coordinates, so the record cannot be placed on a transect and drops out of",
+        "every map and per-transect count. Fill latitude and longitude from the",
+        "collection plot."),
+  paste("Marked as missing from the physical collection. Nothing to fix in the data --",
+        "either find the specimen or leave the flag as the record that it is gone."))
+
+#' Name the workbook to edit, rather than "the raw .xlsx"
+#'
+#' There are nineteen versions on disk. Naming the newest, and saying to save a new
+#' one rather than edit it, is the difference between a fix and a lost correction.
+#'
+#' @param files Workbook filenames; the highest V number is taken as current.
+#' @return A sentence naming the file and the rule.
+.specimen_fix_hint <- function(files = NULL) {
+  if (is.null(files))
+    files <- list.files("data/specimens/records", pattern = "^cabr_bee_specimens_record_V[0-9]+_.*[.]xlsx$")
+  if (!length(files)) return("the specimen workbook in data/specimens/records/")
+  v <- suppressWarnings(as.integer(sub(".*_V([0-9]+)_.*", "\\1", files)))
+  newest <- files[which.max(v)]
+  paste0("data/specimens/records/", newest,
+         " -- find each row by ucsd_id / sdnhm_id. Save a NEW version when done ",
+         "(next number, today's date); never edit an old one.")
+}
+
+#' Wrap a review instruction so it fits a terminal
+#'
+#' The gate printed its explanation and its fix instruction as single unwrapped lines,
+#' so both ran off the right edge and the operator could not read the end of either.
+#' Continuations are indented past the first line, so a wrapped sentence still reads as
+#' one block rather than as new bullets.
+#'
+#' @param text The sentence to wrap.
+#' @param first Indent for the first line.
+#' @param rest Indent for the continuations.
+#' @param width Column to wrap at.
+#' @return Character vector of lines.
+.review_wrap <- function(text, first = "     ", rest = "       ", width = 84)
+  strwrap(text, width = width, initial = first, prefix = rest)
+
+#' The "where to fix it" instruction, wrapped
+#'
+#' @param fix_hint The workbook sentence from `.specimen_fix_hint()`.
+#' @return Character vector of lines.
+.review_fix_lines <- function(fix_hint)
+  .review_wrap(paste("Review these in", sub("[.]+$", ".", fix_hint)),
+               first = "     ", rest = "       ")
+
+#' One review checkpoint, so nothing in a review folder is silently missed
+#'
+#' Prints each outstanding issue with a path you can open and, where given, a
+#' sentence saying what it means and how to fix it. A folder name plus a bare
+#' filename is not a path a newcomer can act on.
+#'
+#' @param items Data frame of `label`, `count`, `file`, and optionally `what` --
+#'   the plain-language explanation shown under the label.
+#' @param review_dir Folder the files sit in; joined to `file` for the full path.
+#' @param interactive_ok FALSE prints the summary and continues, never blocking
+#'   an unattended run.
+#' @param prompt_fn Injection point for reading the answer.
+#' @param fix_hint Where the fix is made, named in the prompt.
+#' @param blocking TRUE offers to stop so the fix can happen now; FALSE is a
+#'   heads-up that continues on Enter.
+#' @return `"clean"` when nothing is outstanding, `"continue"`, or `"stop"`.
+#' What to actually do about a record with no flower recorded
+#'
+#' "Add the observation field" is not actionable -- iNaturalist has thousands of
+#' them. These are the two this project reads, spelled the way they appear on the
+#' site, taken from the crosswalk (`bee_on_flower`, `flower_visited`).
+#'
+#' @return Two strings: the survey explanation, then the non-survey one.
 resolve_review_gate <- function(items, review_dir, interactive_ok, prompt_fn = readline,
                                 fix_hint = "the raw .xlsx", blocking = TRUE) {
   items <- items[!is.na(items$count) & items$count > 0, , drop = FALSE]
   if (!nrow(items)) return("clean")
-  message("\n  ⚠ REVIEW NEEDED -- ", review_dir)
-  for (i in seq_len(nrow(items)))
-    message(sprintf("     %-34s %4d  -> %s", items$label[i], items$count[i], items$file[i]))
+  message("\n  ⚠ REVIEW NEEDED")
+  for (i in seq_len(nrow(items))) {
+    message(sprintf("     %-52s (%d)", items$label[i], items$count[i]))
+    # a path you can open, not a folder plus a filename to join up yourself
+    message("        ", file.path(review_dir, items$file[i]))
+  }
+  # Two rows often share one fix. Printing it per row turns a short instruction
+  # into a wall of text, so identical explanations collapse to one block.
+  if ("what" %in% names(items)) {
+    for (w in unique(items$what[!is.na(items$what) & nzchar(items$what)])) {
+      message("")
+      for (para in strsplit(w, "\n", fixed = TRUE)[[1]])
+        for (ln in .review_wrap(para)) message(ln)
+    }
+  }
   if (!interactive_ok) { message("     (batch mode: logged above, continuing)"); return("continue") }
   if (!blocking) {   # heads-up only -- the run never stops here; the fix happens elsewhere, later
-    prompt_fn(sprintf("  Review these in %s when you can (each row has its url).  [Enter] to continue: ", fix_hint))
+    for (ln in .review_fix_lines(fix_hint)) message(ln)
+    message("     Each row carries its url.")
+    prompt_fn("     [Enter] to continue: ")
     return("continue")
   }
   # "Review", not "fix": some flags are genuine mistakes to correct, others are just new taxa
   # (a real name not in the lookup yet) that need no raw-data change -- they get added on rebuild.
-  .review_ask(prompt_fn, sprintf("  Review these in %s.", fix_hint))
+  message("")
+  for (ln in .review_fix_lines(fix_hint)) message(ln)
+  .review_ask(prompt_fn, "")
 }
 
 # QC flags: which required-data fields are missing. genus is the one rank expected

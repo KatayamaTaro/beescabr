@@ -241,22 +241,23 @@ gtr <- ggplot(tr, aes(transect, S, fill = transect, pattern = rank)) +
     pattern_fill = "white", pattern_colour = NA, pattern_angle = 45,
     pattern_density = 0.10, pattern_spacing = 0.028, pattern_key_scale_factor = 0.5) +
   ggpattern::scale_pattern_manual(values = c(genus = "stripe", species = "none"), name = NULL,
-    breaks = c("genus", "species"), labels = c(genus = "genera", species = "species")) +
+    breaks = c("genus", "species"), labels = c(species = "species", genus = "genera")) +
   scale_fill_manual(values = TCOLS, guide = "none") +
   guides(pattern = guide_legend(override.aes = list(fill = "grey75"))) +   # legend keys show the hatch clearly
   geom_text(data = subset(tr, rank == "species"), aes(label = round(S)), vjust = -0.35, size = 3) +
   geom_text(data = subset(tr, rank == "genus"), aes(label = round(S)),
             vjust = -0.35, size = 3, colour = "white", fontface = "bold") +   # genus count sits just above the hatch top (on the solid species band)
   scale_y_continuous(expand = expansion(mult = c(0, 0.10))) +
-  labs(title = "Do some transects have more richness of bees than others?",
-       subtitle = "Richness rarefied to a common sampling effort within each rank, so a taller bar means genuinely richer, not just more-sampled.",
-       x = "transect", y = "number of unique taxa",
+  labs(title = "Richness",
+       subtitle = "Richness rarefied to a common sampling effort within each rank",
+       x = "Transect", y = "Number of unique taxa",
        caption = scope_cap("survey records only", "lethal + non-lethal pooled", "genus & species",
                            control = sprintf("rarefied to a common effort (genera %d, species %d records)", n_gen, n_sp),
                            sig = bee_test("individual-based rarefaction"))) +
   theme_beescabr(11) +
   theme(panel.grid.major.x = element_blank(), legend.position = "right",
         plot.title = element_text(hjust = 0.5), plot.subtitle = element_text(hjust = 0.5))
+
 bee_ggsave(file.path(rare_base("by_transect"), "bee_richness_by_transect_rarefaction.png"), gtr,
            width = 9.2, height = 5, bg = "white")
 message("  by_transect combined (genus + species): bee_richness_by_transect_rarefaction.png")

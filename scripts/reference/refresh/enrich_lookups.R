@@ -104,14 +104,34 @@ IUCN_SYNONYM    <- c("Bombus sonorus"      = "Bombus pensylvanicus",
 # quietly erasing Bombus crotchii (Endangered) from the public pages. A failure now returns
 # ok = FALSE with code = NA, and the caller keeps whatever the cache already held.
 # fetch_fn is injectable so the failure paths are testable without touching the network.
-.iucn_fetch_one <- function(binom, key, fetch_fn = NULL) {
+# rredlist 1.1.1 cannot report "this species has no assessments". rl_species_latest()
+# warns "Returning the latest assessment across all scopes" and then throws
+# "incorrect number of dimensions" sorting a result that is empty. Most native bees
+# have never been assessed, so this fires constantly: the first live run called it 74
+# failures out of 79 and advised trying again later, which would never have helped.
+#
+# rl_species() handles the same species fine and reports zero assessments, so it is
+# used to tell the two apart. Zero assessments is Not Evaluated -- a real answer.
+.IUCN_EMPTY_ERR <- "incorrect number of dimensions"
+
+.iucn_fetch_one <- function(binom, key, fetch_fn = NULL, probe_fn = NULL) {
   q  <- if (binom %in% names(IUCN_SYNONYM)) unname(IUCN_SYNONYM[binom]) else binom
   fn <- if (is.null(fetch_fn))
     function(...) rredlist::rl_species_latest(genus = word(q, 1), species = word(q, 2),
                                               key = key, parse = TRUE)
   else fetch_fn
+  probe <- if (is.null(probe_fn))
+    function(...) rredlist::rl_species(genus = word(q, 1), species = word(q, 2),
+                                       key = key, parse = FALSE)
+  else probe_fn
   err <- NA_character_
   res <- tryCatch(fn(), error = function(e) { err <<- conditionMessage(e); NULL })
+  if (is.null(res) && !is.na(err) && grepl(.IUCN_EMPTY_ERR, err, fixed = TRUE)) {
+    # crash-on-empty, or a genuine parse problem? Only the count settles it.
+    n <- tryCatch(length(probe()$assessments), error = function(e) NA_integer_)
+    if (!is.na(n) && n == 0L)
+      return(list(ok = TRUE, error = NA_character_, code = "NE", year = "", note = ""))
+  }
   if (is.null(res))
     return(list(code = NA_character_, year = NA_character_, note = "", ok = FALSE, error = err))
   code <- tryCatch(res$red_list_category$code, error = function(e) NULL)
@@ -120,6 +140,67 @@ IUCN_SYNONYM    <- c("Bombus sonorus"      = "Bombus pensylvanicus",
   list(ok = TRUE, error = NA_character_, code = code, year = as.character(year %||% ""),
        note = if (q != binom && code != "NE") sprintf(" (as %s)", q) else "")
 }
+
+# What to print when the Red List cannot be reached. A pure function because the
+# braces here were wrong once: `if (!nzchar(key))` guarded only the first of the
+# token block's two lines, so the second printed even when a token WAS set, and an
+# operator missing only an R package was sent hunting for credentials they had.
+# The two causes have completely different fixes, so each is reported on its own.
+.iucn_skip_note <- function(need_n, has_pkg, has_key) {
+  c(sprintf(paste("  Conservation status: %d bee%s have never been looked up, and could not",
+                  "be this run."),
+            need_n, if (need_n == 1L) "" else "s"),
+    "  They will read \"Not Evaluated\", which is not the same as \"not threatened\".",
+    if (!has_pkg)
+      "  The rredlist package is missing. Run: source('scripts/utils/install_requirements.R')",
+    if (!has_key) c(
+      "  There is no IUCN token on this computer. One is free from",
+      "  https://api.iucnredlist.org -- put it in data/secrets/iucn_api.env,",
+      "  then run the pipeline again."))
+}
+
+#' The status pass could not run at all
+#'
+#' enrich_iucn_columns() writes "NE" / "Not Evaluated" onto EVERY bee when the lookup
+#' returns nothing, so a genuinely Endangered bee reaches the public field guide
+#' looking unassessed. The old message was two words and an R error.
+#'
+#' @param err Why it failed.
+#' @return Lines to print.
+.iucn_skipped_note <- function(err) c(
+  paste0("  !! Conservation status could not be fetched: ", err),
+  "  Every bee in this run reads \"Not Evaluated\" as a result -- including any that",
+  "  are genuinely threatened. Do not publish the field guides from this run.",
+  "  Fix the problem above and run the pipeline again.")
+
+#' Some lookups worked, some did not
+#' @param n_fail,n_total Counts.
+#' @param auth TRUE when the key itself was rejected.
+#' @return Lines to print.
+.iucn_partial_note <- function(n_fail, n_total, auth) c(
+  sprintf("  Conservation status: %d of %d bees came back; %d did not.",
+          n_total - n_fail, n_total, n_fail),
+  "  The ones that failed keep whatever status they already had -- unchanged, not",
+  "  reset. Nothing is wrong with the ones that worked.",
+  if (auth)
+    "  The token was rejected. Check data/secrets/iucn_api.env, then run again."
+  else
+    "  Usually the Red List was briefly unreachable. Try again later; nothing is lost.")
+
+#' Where the status cache lives
+#' @param n Species in it.
+#' @param path The file.
+#' @return One line.
+.iucn_cache_note <- function(n, path)
+  sprintf("  Conservation status on file for %s bees -> %s", format(n, big.mark = ","), path)
+
+#' Plant common names that could not be fetched
+#' @param n How many genera.
+#' @return Lines to print.
+.pgc_unresolved_note <- function(n) c(
+  sprintf("  Common names: %d plant genus name%s could not be fetched from iNaturalist.",
+          n, if (n == 1L) "" else "s"),
+  "  Those plants show their Latin name only. Nothing else is affected.")
 
 # Resolve IUCN status for a vector of "Genus species" names. Returns the FULL cache-backed
 # table (data.frame). Incremental + offline-safe; writes the cache when it learns something.
@@ -135,14 +216,8 @@ resolve_iucn <- function(species, force = FALSE, verbose = TRUE) {
 
   # Say WHICH thing is missing. "no token / rredlist missing" left the operator guessing,
   # and the two have completely different fixes.
-  if (length(need) > 0 && !can_net && verbose) {
-    message(sprintf("  IUCN: %d species not refreshed -- using the cached values.", length(need)))
-    if (!has_pkg)
-      message("  IUCN: rredlist is not installed. Run: source('scripts/utils/install_requirements.R')")
-    if (!nzchar(key))
-      message("  IUCN: no API token. Get one free at https://api.iucnredlist.org and the")
-      message("  IUCN: pipeline will ask for it, or put it in data/secrets/iucn_api.env")
-  }
+  if (length(need) > 0 && !can_net && verbose)
+    for (ln in .iucn_skip_note(length(need), has_pkg, nzchar(key))) message(ln)
 
   if (can_net) {
     if (verbose) message(sprintf("  IUCN: fetching %d species from the Red List (v4)...", length(need)))
@@ -168,15 +243,10 @@ resolve_iucn <- function(species, force = FALSE, verbose = TRUE) {
     if (any(failed)) {
       auth <- any(vapply(fetched[failed], function(x) .iucn_is_auth_error(attr(x, "error")), TRUE))
       if (verbose) {
-        message(sprintf("  IUCN: %d of %d lookups FAILED and were not cached (existing values kept).",
-                        sum(failed), nrow(new)))
-        if (all(failed)) {
-          message("  IUCN: every lookup failed. The status column is unchanged, NOT 'nothing is threatened'.")
-          if (auth) {
-            message("  IUCN: the API REJECTED the key (401/403). It is expired, revoked, or wrong.")
-            message("  IUCN: get a new one at https://api.iucnredlist.org (Your account -> Cycle token),")
-            message("  IUCN: then put it in data/secrets/iucn_api.env as IUCN_REDLIST_KEY=...")
-          }
+        for (ln in .iucn_partial_note(sum(failed), nrow(new), auth)) message(ln)
+        if (all(failed) && auth) {
+          message("  Get a new token at https://api.iucnredlist.org (Your account -> Cycle token)")
+          message("  and put it in data/secrets/iucn_api.env as IUCN_REDLIST_KEY=...")
         }
       }
       new <- new[!failed, , drop = FALSE]
@@ -192,14 +262,14 @@ resolve_iucn <- function(species, force = FALSE, verbose = TRUE) {
     # rows are preserved by the merge, and caching the genuinely-NE new species stops them
     # from being re-queried on every run (a single unassessed species used to re-fetch forever).
     if (force && sum(new$iucn_code != "NE") == 0 && old_assessed > 0) {
-      if (verbose) message("  IUCN: full re-pull returned no assessments (offline?) -- keeping existing cache.")
+      if (verbose) for (ln in .iucn_partial_note(length(need), length(need), auth = FALSE)) message(ln)
     } else {
       merged <- if (force) new else bind_rows(cache[!cache$scientific_name %in% new$scientific_name, , drop = FALSE], new)
       merged <- merged[order(merged$scientific_name), , drop = FALSE]
       dir.create(IUCN_DIR, recursive = TRUE, showWarnings = FALSE)
       write.csv(merged, IUCN_CACHE_FILE, row.names = FALSE)
       cache <- merged
-      if (verbose) message(sprintf("  IUCN: cache now holds %d species.", nrow(cache)))
+      if (verbose) message(.iucn_cache_note(nrow(cache), IUCN_CACHE_FILE))
       # Record the Red List EDITION these statuses came from. IUCN requires the version in
       # any citation, and the public pages must not have to make a live call to print it.
       v <- tryCatch(rredlist::rl_version(key = key), error = function(e) NULL)
@@ -222,7 +292,9 @@ enrich_iucn_columns <- function(df, species_col = "scientific_name", rank_col = 
              else rep(TRUE, nrow(df))
   binoms  <- ifelse(sp_rows, str_squish(df[[species_col]]), NA_character_)
   tab <- tryCatch(resolve_iucn(binoms[!is.na(binoms)]),
-                  error = function(e) { message("  !! IUCN enrichment skipped: ", conditionMessage(e)); NULL })
+                  error = function(e) {
+                    for (ln in .iucn_skipped_note(conditionMessage(e))) message(ln)
+                    NULL })
   code_map <- if (is.null(tab)) character(0) else setNames(toupper(tab$iucn_code), tab$scientific_name)
   cat_map  <- if (is.null(tab)) character(0) else setNames(tab$iucn_category,        tab$scientific_name)
   yr_map   <- if (is.null(tab)) character(0) else setNames(tab$assessment_year,      tab$scientific_name)
@@ -301,7 +373,7 @@ resolve_plant_common <- function(genera, force = FALSE, verbose = TRUE) {
     }
     if (verbose) message(sprintf("  plant common names: fetched %d new.", length(fetched)))
   } else if (length(need) > 0 && verbose) {
-    message(sprintf("  plant common names: %d genera unresolved (offline/blocked) -- using cache + local seed.", length(need)))
+    for (ln in .pgc_unresolved_note(length(need))) message(ln)
   }
 
   # assemble & persist the cache: prior cache + local seed + newly fetched (fetched wins on refresh)

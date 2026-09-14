@@ -78,6 +78,29 @@ FPI_TRANSECTS <- "data/spatial/shapefiles/transects/cabr_bee_transects.shp"  # r
 FPI_MEMBERSHIP     <- "data/inat_observations/inat_raw/cabr_inat_raw_generated.csv"  # the per-obs lookup
 FPI_SURVEY_DATES   <- PATHS$per_survey
 FPI_INTERN_LOG     <- "data/project_info/surveys/survey_date_sources/master_intern_survey_log_manual.csv"  # curated intern survey-day log (SOURCE OF TRUTH -- edit intern days HERE, not in the generated master)
+#' The review-queue summary, with somewhere to go for anything outstanding
+#'
+#' It used to print three counts and nothing else -- "0 unknown tags . 0 fields .
+#' 8 windows" -- which tells someone there is work without telling them where it
+#' is or what it means. A count is only useful with the file beside it.
+#'
+#' @param tags,fields,windows Counts outstanding in each queue.
+#' @return Invisibly NULL; prints.
+.fpi_review_summary <- function(tags, fields, windows) {
+  if (!tags && !fields && !windows) { bx_kv("Review queue", "nothing waiting on you"); return(invisible(NULL)) }
+  bx_kv("Review queue", tags, " unknown tags \U00B7 ", fields, " fields \U00B7 ", windows, " survey-date windows")
+  if (tags || fields)
+    bx_cont("tags/fields: words on an observation the project has not seen before. ",
+            "Sorted in the REVIEW step below -- no file to open.")
+  if (windows) {
+    bx_cont("windows: a survey day on the beeple calendar with no tagged survey near it.")
+    bx_cont("Rule on each in  ", FPI_REVIEW)
+    bx_cont("Nothing is dropped meanwhile; unruled days stay out of the survey counts")
+    bx_cont("and come back next run.")
+  }
+  invisible(NULL)
+}
+
 FPI_REVIEW         <- "data/project_info/surveys/review/qc_review_survey_beeple_date_windows_generated.csv"   # beeple windows to rule on (persistent)
 FPI_MISTAGS        <- "data/inat_observations/review/qc_review_inat_mistagged_transects_generated.csv"  # stray transect tags outvoted by the day's majority
 FPI_TIES           <- "data/project_info/surveys/review/qc_review_survey_transect_overlap_generated.csv"  # equal-split days to rule (review_transect_ties)
@@ -378,10 +401,12 @@ finding_project_info <- function(write = TRUE) {
     bx_kv("Surveys", nrow(survey_dates), " confirmed")
     if (!is.null(.part)) bx_kv("Participation", nrow(.part), paste0(" person-years \U00B7 ",
                                 length(unique(.part$person_id)), " people"))
-    bx_kv("Review queue", nrow(unknown_tags), " unknown tags · ", nrow(unknown_fields), " fields · ", nrow(review_windows), " windows")
+    .fpi_review_summary(nrow(unknown_tags), nrow(unknown_fields), nrow(review_windows))
     if (!is.null(mistags)) bx_cont(nrow(mistags), " stray transect tags to fix")
     if (!is.null(ties) && nrow(ties)) bx_cont(nrow(ties), " tie day(s) to rule")
-    bx_out("master_per_survey_info_generated.csv, cabr_inat_raw_generated.csv (+ review files)")
+    bx_out(FPI_SURVEY_DATES)   # data/project_info/surveys/master_per_survey_info_generated.csv
+    bx_out(FPI_MEMBERSHIP)     # data/inat_observations/inat_raw/cabr_inat_raw_generated.csv
+    bx_cont("review files, if any, are listed above with their full paths")
   }
   invisible(list(membership = membership, survey_dates = survey_dates, review_windows = review_windows,
                  mistags = mistags, ties = ties, unknown_tags = unknown_tags, unknown_fields = unknown_fields))

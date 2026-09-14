@@ -183,8 +183,16 @@ One consistent set, everywhere.
 | `q` | save everything and quit |
 | `?` | show the keys again |
 
-Each reviewer adds its own keys on top — windows also takes `y`/`n`/`u` and
-`l` to list URLs.
+Each reviewer adds its own keys on top:
+
+| Reviewer | Extra keys |
+|---|---|
+| Unknown tags / fields | `i` file it as **ignore** (keep the observation, skip the field) · `n` name a new concept |
+| Survey windows | `y` / `n` · `u` unsure · `l` list the URLs |
+| Transect ties | `b` (or `both`) — a genuine two-transect day, kept as such · `u` unsure |
+| New-taxon verification | `y` verify · `r` reject-for-now · the prompt explains itself in full |
+
+An answer the reviewer does not recognise is **re-asked**, never guessed.
 
 **Heads-up prompts** have nothing to decide: any key continues.
 
@@ -214,7 +222,7 @@ Structured key-value fields, which *do* need a decision:
 
 ## The crosswalk
 
-`data/project_info/project_tags_fields.csv` controls `inat_bee_clean.R` and `inat_plant_clean.R`. Adding or editing rows changes script behavior without touching any R code.
+`data/project_info/crosswalk/master_crosswalk_manual.csv` controls `inat_bee_clean.R` and `inat_plant_clean.R`. Adding or editing rows changes script behavior without touching any R code.
 
 ### Column reference
 
@@ -346,7 +354,7 @@ hatch, not a run mode — see the flags in the header of
 
 Two scripts pull from the API rather than the CSV export:
 
-- `scripts/inat_observations/inat_bee_clean.R` — fetches survey observations, tags, and observation fields via `/v1/observations`.
+- `scripts/inat_observations/clean/inat_bee_clean.R` — fetches survey observations, tags, and observation fields via `/v1/observations`.
 - `scripts/reference/taxonomy/taxonomy_lookup_build.R` — per-taxon taxonomy/ancestry lookups (~400 calls, ~3–4 min), via the v1 taxa endpoints.
 
 **Endpoint:** `https://api.inaturalist.org/v1/observations`. Read-only; no authentication required. Max `per_page = 200`; `inat_bee_clean.R` pages with an `id_above` cursor. Rate limit: ~1 request/second; scripts include `Sys.sleep(1)`.

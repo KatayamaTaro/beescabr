@@ -113,6 +113,21 @@ plant_closest <- function(name, canonicals, n = 6L) {
   canonicals[order(d)][seq_len(min(n, length(canonicals)))]
 }
 
+#' How alike two plant names are, as a percentage
+#'
+#' The option list offered a "nearest" name with no idea how near, so a plant sharing
+#' nothing with the one being reviewed sat in the list looking like a candidate --
+#' "Salvia apiana" was offered "1=Isocoma menziesii". A tired operator typing 1 files
+#' a sage under a goldenbush. The figure is what keeps a bad match visibly bad.
+#'
+#' @param a,b Names to compare.
+#' @return 0-100, where 100 is identical after normalization.
+plant_similarity <- function(a, b) {
+  x <- pcn_norm(a); y <- pcn_norm(b)
+  w <- pmax(nchar(x), nchar(y))
+  ifelse(w == 0, 0L, as.integer(round(100 * (1 - as.integer(adist(x, y)) / w))))
+}
+
 .cpn_write_worklist <- function(unk, crosswalk, path = CPN_WORKLIST) {
   canon <- plant_canonicals(crosswalk)
   wl <- unk |>
@@ -133,13 +148,30 @@ cw_add_plant_canonical <- function(cw, canonical, variant) {
 
 # On-demand ("?") help -- plain-language key legend (same control keys as the other reviewers).
 .cpn_help <- function() {
-  cat("\n  For each unknown plant name, tell me where it goes:\n")
-  cat("   <Enter>   file it under the highlighted (*) typo guess -- if there's no *, this just skips\n")
-  cat("   <number>  file it under that nearest canonical (e.g. 2)\n")
-  cat("   a         ADD it as a brand-new canonical plant\n")
-  cat("   s         skip for now (stays unreviewed, returns next run)\n")
-  cat("   q         save & quit                       ?  show this help\n\n")
+  cat("\n  WHAT THIS IS\n")
+  cat("    Plant names arrive two ways: typed on a specimen label, and picked on\n")
+  cat("    iNaturalist. The same plant is often spelled differently in the two, and\n")
+  cat("    unless they are tied together the bee-plant records split in half. This is\n")
+  cat("    where you say which names mean the same plant.\n\n")
+  cat("    Your answers are saved in ", CPN_CW, "\n\n", sep = "")
+  cat("  WHAT TO TYPE\n")
+  cat("   <Enter>   yes, it is the one shown as the guess -- file this spelling under it.\n")
+  cat("             When no guess is offered, Enter does nothing; use a or s.\n")
+  cat("   <number>  a different plant from the list -- file it under that one\n")
+  cat("   a         none of those. It is a plant we have not recorded before.\n")
+  cat("   s         not sure -- you are asked again next run\n")
+  cat("   q         save what you have answered and stop      ?  show this again\n\n")
 }
+
+#' What to type when this file is sourced by hand
+#'
+#' "Sourced collect_plant_names.R -- run: review_plant_names()" named the file and the
+#' function and said nothing about what either does, so there was no reason to type it.
+#' @return Lines to print.
+.cpn_sourced_hint <- function() c(
+  "Run review_plant_names() to sort out plant names that are spelled more than one",
+  "way -- so a plant written on a specimen label and the same plant picked on",
+  "iNaturalist count as one plant and not two.")
 
 # ------------------------------------------------------------
 # review_plant_names(): the interactive loop (mirrors review_unknowns).
@@ -170,13 +202,19 @@ review_plant_names <- function(cw_path = CPN_CW,
   if (!interactive_ok) {
     p <- .cpn_write_worklist(unk, cw, worklist_path)
     bx_kv("Plant names", nrow(unk), " unknown name(s) to review")
-    bx_out(basename(p))
+    bx_out(p)
     return(invisible(cw))
   }
 
-  bx_kv("Plant names", nrow(unk), " unknown name(s) to review")
-  cat("  For each: <Enter>=accept * guess as a spelling of it | <number>=file under that canonical",
-      "  a=ADD as a new canonical plant | s=skip | q=save & quit | ?=help\n", sep = "\n")
+  bx_kv("Plant names", nrow(unk), " name",
+        if (nrow(unk) == 1L) "" else "s", " nobody has sorted yet")
+  cat("\n  These plant names turned up on specimen labels or iNaturalist records and do\n")
+  cat("  not match any plant already on file. For each one: is it another spelling of\n")
+  cat("  a plant we have, or a plant we have not recorded before?\n")
+  cat("  Getting it wrong splits one plant's bee records in two, so 's' (not sure) is\n")
+  cat("  always safe -- you are asked again next run.\n")
+  cat("  Answers are saved in ", CPN_CW, "\n", sep = "")
+  cat("  Type ? at any point for the full explanation.\n")
   changed <- FALSE
   for (k in seq_len(nrow(unk))) {
     it <- unk$name[k]; src <- unk$source[k]
@@ -184,31 +222,45 @@ review_plant_names <- function(cw_path = CPN_CW,
     near  <- plant_closest(it, canon, n = 6L)
     sugg  <- plant_suggest(it, canon)
     cat(sprintf("\n[%d/%d] unknown plant: \"%s\"  (%s)\n", k, nrow(unk), it, src))
-    if (!is.na(sugg)) cat(sprintf("  looks like a typo of: %s   [Enter = file it under that]\n", sugg))
+    if (!is.na(sugg))
+      cat(sprintf("  Looks like a misspelling of  %s  -- press Enter if it is.\n", sugg))
     if (length(near)) {
-      labs <- sprintf("%d=%s%s", seq_along(near), near, ifelse(!is.na(sugg) & near == sugg, "*", ""))
-      cat("  nearest canonicals: ", paste(labs, collapse = "   "), "\n")
+      cat("  Plants we already have, closest first:\n")
+      for (j in seq_along(near))
+        cat(sprintf("    %d  %-38s %3d%% alike%s\n", j, near[j],
+                    plant_similarity(it, near[j]),
+                    if (!is.na(sugg) && near[j] == sugg) "  <- the guess above" else ""))
     }
-    cat("  <Enter>=accept*   <number>=file under that   a=add-as-new   s=skip   q=save & quit   ?=help\n")
+    if (!is.na(sugg)) cat("    Enter=yes, the guess above    number=one of the others\n")
+    else              cat("    number=one of the list above   (no guess, so Enter does nothing)\n")
+    cat("    a=a plant we have not recorded    s=not sure    q=save and stop    ?=help\n")
     repeat { ans <- trimws(prompt_fn("> ")); low <- tolower(ans); if (low != "?") break; .cpn_help() }
     if (low == "q") break
     if (low == "s") next
     if (low == "a") { cw <- cw_add_plant_canonical(cw, it, it); changed <- TRUE; next }
     if (ans == "") {
       if (!is.na(sugg)) { cw <- cw_append(cw, which(cw$name == sugg)[1], "specimen_label_variants", it); changed <- TRUE }
-      else cat("  (no suggestion -- use a to add it as a new canonical, or s to skip)\n")
+      else cat("  Nothing on the list is close enough to guess at, so Enter does nothing here.\n",
+               "  Type a to add it as a new plant, or s if you are not sure.\n", sep = "")
       next
     }
     num <- suppressWarnings(as.integer(ans))
     if (!is.na(num) && num >= 1 && num <= length(near)) {
       cw <- cw_append(cw, which(cw$name == near[num])[1], "specimen_label_variants", it); changed <- TRUE
-    } else cat("  ? didn't understand -- skipped\n")
+    } else cat("  That is not one of the choices (a number from the list, a, s or q),\n",
+               "  so nothing was recorded -- you will be asked about it again next run.\n", sep = "")
   }
 
-  if (changed && write) { write.csv(cw, cw_path, row.names = FALSE, na = ""); cat("\nSaved master_crosswalk_manual.csv\n") }
-  else cat("\nNo changes written.\n")
+  if (changed && write) {
+    write.csv(cw, cw_path, row.names = FALSE, na = "")
+    cat("\nSaved your answers -> ", cw_path, "\n", sep = "")
+  } else if (!changed) {
+    cat("\nNothing to save -- no name was filed.\n")
+  } else {
+    cat("\nNothing was saved: this run was asked not to write to the file.\n")
+  }
   invisible(cw)
 }
 
 if (!exists("BEESCABR_SOURCED_BY_RUNNER") && sys.nframe() == 0)
-  message('Sourced collect_plant_names.R -- run: review_plant_names()')
+  for (ln in .cpn_sourced_hint()) message(ln)
