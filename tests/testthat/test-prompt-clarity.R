@@ -574,3 +574,45 @@ test_that("the fix instruction wraps too, and does not double its full stop", {
   expect_false(any(grepl("..", lines, fixed = TRUE)))
   expect_match(paste(lines, collapse = " "), "V19_2026_09_02.xlsx", fixed = TRUE)
 })
+
+# Avatars are shrunk with `sips`, which is macOS-only. On Windows the fallback embeds
+# the full-size headshots instead, and says nothing: Taro's acknowledgements page came
+# out at 13 MB against 2.2 MB here. It does not reach the public site -- Brandi
+# publishes from her own machine -- but a page six times larger with no explanation
+# reads as something being broken.
+src("website/build_content_pages.R")
+
+test_that("it says when it could not shrink the photos, and why that is ok", {
+  txt <- paste(.bcp_no_resizer_note(), collapse = " ")
+  # names the FIX rather than the missing Mac tool: "sips is macOS-only" tells a
+  # Windows user nothing they can act on
+  expect_match(txt, "larger", ignore.case = TRUE)
+  expect_match(txt, "local|not published|preview", ignore.case = TRUE)
+  expect_match(txt, "install", ignore.case = TRUE)
+})
+
+test_that("the note is short enough to read mid-run", {
+  expect_lte(length(.bcp_no_resizer_note()), 4L)
+})
+
+# `sips` is macOS-only, so on Taro's Windows machine the avatars were embedded at full
+# size: a 13 MB acknowledgements page against 2.2 MB here. magick is on CRAN with a
+# Windows binary and does the same job, so it is used when sips is absent.
+test_that("sips is preferred where it exists", {
+  expect_equal(.bcp_resizer(has_sips = TRUE, has_magick = TRUE), "sips")
+  expect_equal(.bcp_resizer(has_sips = TRUE, has_magick = FALSE), "sips")
+})
+
+test_that("magick covers the machines sips does not", {
+  expect_equal(.bcp_resizer(has_sips = FALSE, has_magick = TRUE), "magick")
+})
+
+test_that("neither available is reported, not silently ignored", {
+  expect_true(is.na(.bcp_resizer(has_sips = FALSE, has_magick = FALSE)))
+})
+
+test_that("the note tells you how to fix it, not just that it happened", {
+  txt <- paste(.bcp_no_resizer_note(), collapse = " ")
+  expect_match(txt, "magick", fixed = TRUE)
+  expect_match(txt, "install_requirements", fixed = TRUE)
+})

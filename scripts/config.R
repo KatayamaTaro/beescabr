@@ -66,6 +66,10 @@ BEESCABR_PACKAGES <- c(
   "vegan", "iNEXT", "bipartite", "igraph",
   # reference data + docs
   "rredlist", "pdftools", "rmarkdown",
+  # magick: shrinks the team photos before they are embedded in the acknowledgements
+  # page. macOS has `sips` built in; magick is what covers Windows and Linux, where the
+  # page was otherwise built with full-size headshots in it (13 MB against 2.2 MB).
+  "magick",
   # tests
   "testthat", "withr",
   # quality of life

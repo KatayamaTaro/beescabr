@@ -111,19 +111,63 @@ person_chip <- function(name, user, extra = "") {
 # side) with macOS `sips` first, keeping the embedded page small. The in-browser
 # object-fit:cover does the square crop, so no server-side cropping is needed. If
 # sips is unavailable or fails, we fall back to embedding the source as-is.
+#' Which tool can shrink the team photos on this machine
+#'
+#' PURE. `sips` ships with macOS and is preferred where it exists. It is macOS-only,
+#' though, and the old fallback embedded the full-size headshots in silence: on a
+#' Windows machine that turned a 2.2 MB acknowledgements page into 13 MB with nothing
+#' on screen to explain it. magick is on CRAN with a Windows binary and does the same
+#' job, so it covers the machines sips cannot.
+#'
+#' @param has_sips,has_magick Injection points, so this is testable on any platform.
+#' @return "sips", "magick", or NA when neither is available.
+.bcp_resizer <- function(has_sips = nzchar(Sys.which("sips")),
+                         has_magick = requireNamespace("magick", quietly = TRUE)) {
+  if (isTRUE(has_sips)) "sips" else if (isTRUE(has_magick)) "magick" else NA_character_
+}
+
+#' Said once when neither resizer is available
+#'
+#' Names the fix rather than just the symptom, and says what it does not affect: this
+#' page is built locally, and the published site is built elsewhere.
+#'
+#' @return Lines to print.
+.bcp_no_resizer_note <- function() c(
+  "  Photos could not be shrunk, so the acknowledgements page will be several times",
+  "  larger than usual. That only affects this local copy; the published site is",
+  "  built separately. To fix it, install the magick package:",
+  "    source(\"scripts/utils/install_requirements.R\")")
+
+# printed at most once per run, however many photos there are
+.bcp_warned_resizer <- FALSE
+
 photo_datauri <- function(fname, target_px = AVATAR_PX) {
   if (!nzchar(fname)) return("")
   src <- file.path(PHOTO_DIR, fname)
   if (!file.exists(src)) return("")
   small <- src
-  if (nzchar(Sys.which("sips"))) {
+  tool  <- .bcp_resizer()
+  if (is.na(tool)) {
+    if (!.bcp_warned_resizer) {
+      for (ln in .bcp_no_resizer_note()) message(ln)
+      .bcp_warned_resizer <<- TRUE
+    }
+  } else {
     cache <- file.path(tempdir(), "beescabr_avatars"); dir.create(cache, showWarnings = FALSE)
     # Always re-encode to a modest-quality JPEG (invisible at avatar size, far smaller
     # than the raw). Size tier is in the name so zoom tiers do not collide.
     out <- file.path(cache, sprintf("%d_%s.jpg", target_px, tools::file_path_sans_ext(fname)))
-    ok <- tryCatch(system2("sips", c("-Z", as.character(target_px), "-s", "format", "jpeg",
-                                     "-s", "formatOptions", "65", src, "-o", out),
-                           stdout = FALSE, stderr = FALSE) == 0, error = function(e) FALSE)
+    ok <- if (identical(tool, "sips"))
+      tryCatch(system2("sips", c("-Z", as.character(target_px), "-s", "format", "jpeg",
+                                 "-s", "formatOptions", "65", src, "-o", out),
+                       stdout = FALSE, stderr = FALSE) == 0, error = function(e) FALSE)
+    else
+      tryCatch({
+        img <- magick::image_read(src)
+        img <- magick::image_resize(img, sprintf("%dx%d>", target_px, target_px))
+        magick::image_write(img, out, format = "jpeg", quality = 65)
+        file.exists(out)
+      }, error = function(e) FALSE)
     if (ok && file.exists(out)) small <- out
   }
   ext  <- tolower(tools::file_ext(small))
