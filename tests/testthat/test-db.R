@@ -262,7 +262,7 @@ test_that("answers for names no longer on the checklist are dropped", {
   decision_put(con, "Holcopasites minima", "pick", 2L)      # respelled away in v4
   current <- c("Andrena quercina", "Holcopasites minimus", paste("Filler bee", 1:200))
 
-  expect_equal(forget_orphan_decisions(con, current), 1L)
+  expect_equal(forget_orphan_decisions(con, current), "Holcopasites minima")
   expect_null(decision_get(con, "Holcopasites minima"))
   expect_equal(decision_get(con, "Andrena quercina")$chosen_taxon_id, 1L)
 })
@@ -271,7 +271,7 @@ test_that("an empty checklist deletes nothing at all", {
   skip_if_no_store()
   con <- open_temp_store(); on.exit(store_disconnect(con), add = TRUE)
   decision_put(con, "Andrena quercina", "pick", 1L)
-  expect_equal(forget_orphan_decisions(con, character(0)), 0L)
+  expect_length(forget_orphan_decisions(con, character(0)), 0L)
   expect_equal(decision_count(con), 1L)
 })
 
@@ -279,7 +279,7 @@ test_that("a suspiciously short checklist deletes nothing -- a bad read must not
   skip_if_no_store()
   con <- open_temp_store(); on.exit(store_disconnect(con), add = TRUE)
   for (i in 1:5) decision_put(con, paste("Bee", i), "pick", i)
-  expect_equal(forget_orphan_decisions(con, c("Bee 1", "Bee 2")), 0L)   # only 2 names
+  expect_length(forget_orphan_decisions(con, c("Bee 1", "Bee 2")), 0L)   # only 2 names
   expect_equal(decision_count(con), 5L)
 })
 
@@ -287,7 +287,7 @@ test_that("stray whitespace does not make a name look dropped", {
   skip_if_no_store()
   con <- open_temp_store(); on.exit(store_disconnect(con), add = TRUE)
   decision_put(con, "Andrena quercina", "pick", 1L)
-  expect_equal(forget_orphan_decisions(con, c("  Andrena quercina  ", paste("Filler bee", 1:200))), 0L)
+  expect_length(forget_orphan_decisions(con, c("  Andrena quercina  ", paste("Filler bee", 1:200))), 0L)
   expect_equal(decision_count(con), 1L)
 })
 
@@ -341,3 +341,41 @@ test_that("a version change is only a change when both versions are known", {
   expect_false(holway_version_bumped(now = NA_integer_, was = 3L))   # unreadable now
   expect_false(holway_version_bumped(now = 3L, was = 4L))            # rebuilding an older one
 })
+
+# The line this printed was wrong in a way that would scare anyone reading it:
+# "dropped 13 saved answers for bees no longer on the checklist". Andrena has 109
+# rows on the checklist -- the bee never left. What no longer exists is the KEY the
+# answer was filed under, a bare genus name that no checklist row produces any more.
+# Saying a bee left the checklist when it did not is worse than saying nothing.
+# Two wordings failed here before this one. "for bees no longer on the checklist" was
+# false -- Andrena has 109 rows on it. "that no longer match anything on the checklist"
+# was still misread, for the same reason: the genus IS on the checklist.
+#
+# The real distinction is about the QUESTION, not the bee. The checklist asks about
+# full names ("Andrena vandykei"); these answers are filed under a bare genus with no
+# species, and nothing asks that. Saying so outright beats any phrase the reader has
+# to decode, and with a handful of them the names themselves fit on screen.
+test_that("the message names what was dropped instead of describing it", {
+  txt <- paste(orphan_decisions_note(c("Andrena", "Osmia")), collapse = " ")
+  expect_match(txt, "Andrena", fixed = TRUE)
+  expect_match(txt, "Osmia", fixed = TRUE)
+})
+
+test_that("it says a bare genus is what is unusual, not the bee", {
+  txt <- paste(orphan_decisions_note(c("Andrena", "Osmia")), collapse = " ")
+  expect_match(txt, "genus name on its own|no species", ignore.case = TRUE)
+  expect_false(grepl("no longer on the checklist", txt, fixed = TRUE))
+  expect_false(grepl("no longer match", txt, fixed = TRUE))
+})
+
+test_that("it says the checklist and the bees are untouched", {
+  txt <- paste(orphan_decisions_note("Andrena"), collapse = " ")
+  expect_match(txt, "still on the checklist", fixed = TRUE)
+})
+
+test_that("a long list is summarised rather than dumped", {
+  txt <- paste(orphan_decisions_note(paste0("Genus", 1:12)), collapse = " ")
+  expect_match(txt, "Genus1", fixed = TRUE)
+  expect_match(txt, "and 6 more", fixed = TRUE)     # first six, then a count
+})
+

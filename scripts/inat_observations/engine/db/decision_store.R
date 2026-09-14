@@ -164,21 +164,53 @@ holway_version_bumped <- function(now, was) {
 # is ~1000 names; anything under this is a bad read, not a shrunken checklist.
 DECISION_MIN_CHECKLIST <- 100L
 
-#' Drop answers for bees that have left the checklist
+#' What to say after dropping unreachable answers
 #'
-#' They are never read again -- the Holway build loops over the names in the current
-#' sheet -- but they accumulate across versions, so a table read years later is full of
-#' answers for bees that left two versions ago. Deleting them changes no output and
-#' costs no re-resolution: nothing was going to look them up.
+#' Two earlier wordings were both misread, for the same reason. "for bees no longer on
+#' the checklist" is false -- Andrena has 109 rows on it. "that no longer match
+#' anything on the checklist" reads the same way, because the genus IS on the
+#' checklist.
+#'
+#' The distinction is about the QUESTION, not the bee. Every checklist row asks about a
+#' full name -- "Andrena vandykei" -- and these answers are filed under a bare genus
+#' with no species after it. Nothing asks that, so nothing reads them. Naming them
+#' outright beats any phrase the reader has to decode.
+#'
+#' @param names The search terms dropped.
+#' @return One line, or two when there are more names than fit.
+orphan_decisions_note <- function(names) {
+  n <- length(names)
+  shown <- paste(utils::head(names, 6), collapse = ", ")
+  more  <- if (n > 6) sprintf(", and %d more", n - 6) else ""
+  c(sprintf("dropped %d old answer%s filed under a genus name on its own: %s%s",
+            n, if (n == 1L) "" else "s", shown, more),
+    paste("  nothing looks those up -- the checklist asks about full names like",
+          "\"Andrena vandykei\"."),
+    "  Those bees are still on the checklist and nothing about them changes.")
+}
+
+#' Drop answers whose key no longer matches any checklist entry
+#'
+#' They are never read again -- the Holway build looks up a key built from each row of
+#' the CURRENT sheet, and these keys are not among them -- but they accumulate, so a
+#' table read years later is full of answers nothing can reach. Verified empirically:
+#' building the reference table with and without them produces byte-identical output.
+#'
+#' Note what this is NOT. The bees are not gone from the checklist. The keys are
+#' mostly bare genus names, left behind when a row whose species field was entirely
+#' decoration ("Andrena sp.") was later given a real epithet.
 #'
 #' @param con An open cache connection.
 #' @param current_terms Every search term the current checklist produces.
-#' @return How many answers were dropped; 0 when the checklist looks unreadable.
+#' @return The search terms dropped, so the caller can name them; empty when the
+#'   checklist looks unreadable.
 forget_orphan_decisions <- function(con, current_terms) {
   cur <- unique(trimws(as.character(current_terms)))
   cur <- cur[!is.na(cur) & nzchar(cur)]
-  if (length(cur) < DECISION_MIN_CHECKLIST) return(0L)
-  decision_forget(con, setdiff(trimws(decisions_all_terms(con)), cur))
+  if (length(cur) < DECISION_MIN_CHECKLIST) return(character(0))
+  gone <- setdiff(trimws(decisions_all_terms(con)), cur)
+  decision_forget(con, gone)
+  gone
 }
 
 decision_count <- function(con) {

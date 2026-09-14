@@ -395,9 +395,8 @@ main <- function() {
     terms <- tryCatch(mapply(holway_search_term, hdf$source_sheet, hdf$genus, hdf$species_raw,
                              USE.NAMES = FALSE),
                       error = function(e) character(0))
-    n <- tryCatch(forget_orphan_decisions(con, terms), error = function(e) 0L)
-    if (n) bx_cont("dropped ", n, " saved answer", if (n == 1L) "" else "s",
-                   " for bees no longer on the checklist")
+    gone <- tryCatch(forget_orphan_decisions(con, terms), error = function(e) character(0))
+    if (length(gone)) for (ln in orphan_decisions_note(gone)) bx_cont(ln)
   })
   tryCatch({
     .hdf <- load_holway(PATHS$holway_combined)
